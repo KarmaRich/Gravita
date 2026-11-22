@@ -133,7 +133,8 @@ jobs:
             --with-expat \
             OPENSSL_CFLAGS="-I${OPENSSL_PREFIX}/include" \
             OPENSSL_LIBS="-L${OPENSSL_PREFIX}/lib -lssl -lcrypto" \
-            CXXFLAGS="-O2"
+            CXXFLAGS="-O2" \
+            LDFLAGS="-framework Security -framework CoreFoundation"
           make -j$(sysctl -n hw.ncpu)
           strip src/aria2c
 
