@@ -34,6 +34,11 @@ fn main() {
         };
 
         cx.open_window(options, |window, cx| {
+            // 点击窗口右上角关闭按钮时默认隐藏到系统托盘，不退出程序（由托盘右键「退出」彻底结束）
+            window.on_window_should_close(cx, |_, _| {
+                settings_panel::hide_window("IDM-Aria2-RS 下载器");
+                false
+            });
             let view = cx.new(|cx| IdmMainView::new(window, cx));
             cx.new(|cx| Root::new(view, window, cx))
         })
