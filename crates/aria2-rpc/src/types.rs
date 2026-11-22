@@ -39,6 +39,9 @@ pub struct AddUriOptions {
     /// 单任务限速（如 "2M"、"500K"、"0" 表示不限速）
     #[serde(rename = "max-download-limit", skip_serializing_if = "Option::is_none")]
     pub max_download_limit: Option<String>,
+    /// 是否允许覆盖已存在的同名文件（"true" / "false"）
+    #[serde(rename = "allow-overwrite", skip_serializing_if = "Option::is_none")]
+    pub allow_overwrite: Option<String>,
 }
 
 /// 任务关联的单个文件信息

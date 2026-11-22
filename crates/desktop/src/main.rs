@@ -2,6 +2,7 @@
 
 mod dialogs;
 mod engine;
+mod settings_dialog;
 mod settings_panel;
 mod state;
 mod ui;

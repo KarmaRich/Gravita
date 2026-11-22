@@ -1,8 +1,9 @@
 //! 仿经典 IDM (Internet Download Manager) 桌面主界面（已接入真实 aria2 后台引擎）
 
-use crate::dialogs::{AddTaskInputs, render_add_task_modal, render_settings_modal};
+use crate::dialogs::{AddTaskInputs, AddTaskTab};
 use crate::engine::{DownloadEngine, EngineCommand, EngineSnapshot};
-use crate::settings_panel::{SettingsInputs, open_directory};
+use crate::settings_dialog::{render_add_task_dialog, render_settings_dialog};
+use crate::settings_panel::{SettingsInputs, SettingsTab, open_directory, pick_directory};
 use crate::state::{DesktopState, SidebarFilter, format_speed};
 use crate::ui_parts::{
     IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row, render_menubar,
@@ -19,6 +20,8 @@ pub struct IdmMainView {
     snapshot: EngineSnapshot,
     show_add_modal: bool,
     show_settings_modal: bool,
+    add_tab: AddTaskTab,
+    settings_tab: SettingsTab,
     add_inputs: AddTaskInputs,
     settings_inputs: SettingsInputs,
     notice: Option<String>,
@@ -34,18 +37,18 @@ impl IdmMainView {
         }
 
         let engine = DownloadEngine::start(state.settings.aria2.clone());
-        // 启动后立即将本地已保存的限速/代理配置同步给内置 aria2c
-        engine.send(EngineCommand::ApplyGlobalOptions {
-            max_overall_download_limit: state.settings.max_overall_download_limit.clone(),
-            proxy: state.settings.proxy.clone(),
-        });
+        // 启动后立即将本地已保存的全局配置同步给内置 aria2c
+        Self::sync_global_options(&engine, &state.settings);
 
-        let default_dir = state
+        let preferred_dir = state
             .settings
-            .default_download_dir
+            .last_save_dir
+            .as_ref()
+            .unwrap_or(&state.settings.default_download_dir)
             .to_string_lossy()
             .into_owned();
-        let add_inputs = AddTaskInputs::new(&default_dir, window, cx);
+        let add_inputs =
+            AddTaskInputs::new(&preferred_dir, state.settings.allow_overwrite, window, cx);
         let settings_inputs = SettingsInputs::from_settings(&state.settings, window, cx);
 
         // 启动轻量 UI 定时刷新循环：每 500ms 同步一次后台 aria2 引擎快照
@@ -71,10 +74,24 @@ impl IdmMainView {
             snapshot: EngineSnapshot::default(),
             show_add_modal: false,
             show_settings_modal: false,
+            add_tab: AddTaskTab::Basic,
+            settings_tab: SettingsTab::General,
             add_inputs,
             settings_inputs,
             notice: None,
         }
+    }
+
+    fn sync_global_options(engine: &DownloadEngine, s: &AppSettings) {
+        engine.send(EngineCommand::ApplyGlobalOptions {
+            max_concurrent_downloads: s.max_concurrent_downloads,
+            max_overall_download_limit: s.max_overall_download_limit.clone(),
+            max_overall_upload_limit: s.max_overall_upload_limit.clone(),
+            proxy: s.proxy.clone(),
+            user_agent: s.user_agent.clone(),
+            timeout_secs: s.timeout_secs,
+            max_tries: s.max_tries,
+        });
     }
 
     /// 返回当前视图应展示的任务列表（已连接 aria2 时展示真实任务，否则展示空或离线提示）
@@ -129,7 +146,21 @@ impl IdmMainView {
             .border_color(p.border)
             .child(
                 idm_tool_button("tb-add", "＋", rgb(0x16a34a), "新建任务", p).on_click(
-                    cx.listener(|this, _, _, cx| {
+                    cx.listener(|this, _, window, cx| {
+                        // 打开新建任务弹窗时优先回填上次选择的保存目录
+                        let preferred = this
+                            .state
+                            .settings
+                            .last_save_dir
+                            .as_ref()
+                            .unwrap_or(&this.state.settings.default_download_dir)
+                            .to_string_lossy()
+                            .into_owned();
+                        this.add_inputs
+                            .save_dir
+                            .update(cx, |i, cx| i.set_value(preferred, window, cx));
+                        this.add_inputs.allow_overwrite = this.state.settings.allow_overwrite;
+                        this.add_tab = AddTaskTab::Basic;
                         this.show_settings_modal = false;
                         this.show_add_modal = true;
                         cx.notify();
@@ -372,9 +403,32 @@ impl Render for IdmMainView {
             .child(self.render_statusbar(p));
 
         if self.show_add_modal {
-            root = root.child(render_add_task_modal(
+            let entity = cx.entity().clone();
+            root = root.child(render_add_task_dialog(
                 &self.add_inputs,
+                self.add_tab,
                 p,
+                move |tab, _, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.add_tab = tab;
+                        cx.notify();
+                    });
+                },
+                cx.listener(|this, _, window, cx| {
+                    let cur = this.add_inputs.save_dir.read(cx).value().trim().to_string();
+                    let init = (!cur.is_empty()).then(|| PathBuf::from(&cur));
+                    if let Some(chosen) = pick_directory(init.as_deref()) {
+                        let s = chosen.to_string_lossy().into_owned();
+                        this.add_inputs
+                            .save_dir
+                            .update(cx, |i, cx| i.set_value(s, window, cx));
+                        cx.notify();
+                    }
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.add_inputs.allow_overwrite = !this.add_inputs.allow_overwrite;
+                    cx.notify();
+                }),
                 cx.listener(|this, _, _, cx| {
                     this.show_add_modal = false;
                     cx.notify();
@@ -390,25 +444,43 @@ impl Render for IdmMainView {
                             this.add_inputs.filename.read(cx).value().trim().to_string();
                         let custom_dir =
                             this.add_inputs.save_dir.read(cx).value().trim().to_string();
-                        let filename = if custom_name.is_empty() {
-                            None
-                        } else {
-                            Some(custom_name)
-                        };
+                        let speed_limit =
+                            this.add_inputs.speed_limit.read(cx).value().trim().to_string();
+                        let task_proxy =
+                            this.add_inputs.proxy.read(cx).value().trim().to_string();
+                        let headers = this.add_inputs.build_headers(cx);
+
+                        let filename = (!custom_name.is_empty()).then_some(custom_name);
                         let save_dir = if custom_dir.is_empty() {
                             let cat = FileCategory::from_filename(
                                 filename.as_deref().unwrap_or(&url),
                             );
-                            Some(this.state.settings.resolve_save_dir(cat))
+                            this.state.settings.resolve_save_dir(cat)
                         } else {
-                            Some(PathBuf::from(custom_dir))
+                            PathBuf::from(custom_dir)
                         };
+
+                        // 记住本次保存目录并持久化
+                        this.state.settings.last_save_dir = Some(save_dir.clone());
+                        let _ = this
+                            .state
+                            .settings
+                            .save_to_file(&AppSettings::default_config_path());
 
                         this.engine.send(EngineCommand::AddUri {
                             url,
                             filename,
-                            save_dir,
+                            save_dir: Some(save_dir),
                             split: this.state.settings.default_split,
+                            max_connection_per_server: this
+                                .state
+                                .settings
+                                .max_connection_per_server,
+                            min_split_size: this.state.settings.min_split_size.clone(),
+                            allow_overwrite: this.add_inputs.allow_overwrite,
+                            max_download_limit: (!speed_limit.is_empty()).then_some(speed_limit),
+                            headers,
+                            proxy: (!task_proxy.is_empty()).then_some(task_proxy),
                         });
                         this.add_inputs.url.update(cx, |i, cx| i.set_value("", window, cx));
                         this.add_inputs
@@ -423,9 +495,38 @@ impl Render for IdmMainView {
         }
 
         if self.show_settings_modal {
-            root = root.child(render_settings_modal(
+            let entity = cx.entity().clone();
+            root = root.child(render_settings_dialog(
                 &self.settings_inputs,
+                self.settings_tab,
                 p,
+                move |tab, _, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.settings_tab = tab;
+                        cx.notify();
+                    });
+                },
+                cx.listener(|this, _, window, cx| {
+                    let cur = this
+                        .settings_inputs
+                        .download_dir
+                        .read(cx)
+                        .value()
+                        .trim()
+                        .to_string();
+                    let init = (!cur.is_empty()).then(|| PathBuf::from(&cur));
+                    if let Some(chosen) = pick_directory(init.as_deref()) {
+                        let s = chosen.to_string_lossy().into_owned();
+                        this.settings_inputs
+                            .download_dir
+                            .update(cx, |i, cx| i.set_value(s, window, cx));
+                        cx.notify();
+                    }
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.settings_inputs.allow_overwrite = !this.settings_inputs.allow_overwrite;
+                    cx.notify();
+                }),
                 cx.listener(|this, _, _, cx| {
                     this.show_settings_modal = false;
                     cx.notify();
@@ -438,14 +539,7 @@ impl Render for IdmMainView {
                     this.settings_inputs.apply_to(&mut this.state.settings, cx);
                     let path = AppSettings::default_config_path();
                     let _ = this.state.settings.save_to_file(&path);
-                    this.engine.send(EngineCommand::ApplyGlobalOptions {
-                        max_overall_download_limit: this
-                            .state
-                            .settings
-                            .max_overall_download_limit
-                            .clone(),
-                        proxy: this.state.settings.proxy.clone(),
-                    });
+                    Self::sync_global_options(&this.engine, &this.state.settings);
                     this.notice = Some("设置已保存并实时应用到 aria2".into());
                     this.show_settings_modal = false;
                     cx.notify();

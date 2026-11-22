@@ -11,10 +11,25 @@ use std::path::{Path, PathBuf};
 pub struct AppSettings {
     /// 默认下载根目录
     pub default_download_dir: PathBuf,
+    /// 上次新建任务选择的保存目录（新建任务时优先回填）
+    #[serde(default)]
+    pub last_save_dir: Option<PathBuf>,
     /// 各文件分类对应的子目录名
     pub category_subdirs: BTreeMap<String, String>,
+    /// 最大同时下载任务数
+    #[serde(default = "default_concurrent")]
+    pub max_concurrent_downloads: u32,
+    /// 默认是否允许覆盖已存在文件
+    #[serde(default)]
+    pub allow_overwrite: bool,
     /// 单任务默认分片数
     pub default_split: u32,
+    /// 单服务器最大连接数
+    #[serde(default = "default_max_conn")]
+    pub max_connection_per_server: u32,
+    /// 最小分片大小（如 "1M"）
+    #[serde(default = "default_min_split")]
+    pub min_split_size: String,
     /// aria2 RPC 连接配置
     pub aria2: Aria2Config,
     /// 供浏览器插件连接的本地 HTTP 接收服务端口
@@ -24,13 +39,52 @@ pub struct AppSettings {
     /// 全局下载限速（如 "0" 表示不限速，"5M" 表示 5MB/s）
     #[serde(default = "default_zero_limit")]
     pub max_overall_download_limit: String,
+    /// 全局上传限速
+    #[serde(default = "default_zero_limit")]
+    pub max_overall_upload_limit: String,
     /// 可选 HTTP/SOCKS 代理地址（如 "http://127.0.0.1:7890"）
     #[serde(default)]
     pub proxy: Option<String>,
+    /// 默认 User-Agent
+    #[serde(default)]
+    pub user_agent: Option<String>,
+    /// 网络超时（秒）
+    #[serde(default = "default_timeout")]
+    pub timeout_secs: u32,
+    /// 最大重试次数（0 表示无限重试）
+    #[serde(default = "default_max_tries")]
+    pub max_tries: u32,
+    /// 磁盘缓存大小（如 "16M"）
+    #[serde(default = "default_disk_cache")]
+    pub disk_cache: String,
+    /// 文件预分配方式（none / prealloc / falloc）
+    #[serde(default = "default_file_alloc")]
+    pub file_allocation: String,
 }
 
 fn default_zero_limit() -> String {
     "0".to_string()
+}
+fn default_concurrent() -> u32 {
+    5
+}
+fn default_max_conn() -> u32 {
+    16
+}
+fn default_min_split() -> String {
+    "1M".to_string()
+}
+fn default_timeout() -> u32 {
+    60
+}
+fn default_max_tries() -> u32 {
+    5
+}
+fn default_disk_cache() -> String {
+    "16M".to_string()
+}
+fn default_file_alloc() -> String {
+    "none".to_string()
 }
 
 impl Default for AppSettings {
@@ -45,13 +99,24 @@ impl Default for AppSettings {
 
         Self {
             default_download_dir: PathBuf::from("Downloads"),
+            last_save_dir: None,
             category_subdirs,
+            max_concurrent_downloads: 5,
+            allow_overwrite: false,
             default_split: 16,
+            max_connection_per_server: 16,
+            min_split_size: "1M".into(),
             aria2: Aria2Config::default(),
             bridge_port: 16800,
             bridge_token: None,
             max_overall_download_limit: "0".into(),
+            max_overall_upload_limit: "0".into(),
             proxy: None,
+            user_agent: None,
+            timeout_secs: 60,
+            max_tries: 5,
+            disk_cache: "16M".into(),
+            file_allocation: "none".into(),
         }
     }
 }

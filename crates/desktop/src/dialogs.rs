@@ -1,39 +1,71 @@
-//! 桌面端居中模态弹窗组件（仿 IDM「新建下载任务」与「选项设置」弹窗）
+//! 桌面端居中模态弹窗通用外壳与「新建下载任务」弹窗
 
-use crate::settings_panel::SettingsInputs;
 use crate::ui_parts::IdmPalette;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::*;
 
+/// 新建任务弹窗标签页（基础 / 高级 HTTP）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddTaskTab {
+    Basic,
+    HttpAdvanced,
+}
+
 /// 新建下载弹窗的输入状态集合
 pub struct AddTaskInputs {
     pub url: Entity<InputState>,
     pub filename: Entity<InputState>,
     pub save_dir: Entity<InputState>,
+    pub speed_limit: Entity<InputState>,
+    pub allow_overwrite: bool,
+    pub referer: Entity<InputState>,
+    pub user_agent: Entity<InputState>,
+    pub cookie: Entity<InputState>,
+    pub proxy: Entity<InputState>,
 }
 
 impl AddTaskInputs {
-    pub fn new(default_dir: &str, window: &mut Window, cx: &mut App) -> Self {
+    pub fn new(default_dir: &str, allow_overwrite: bool, window: &mut Window, cx: &mut App) -> Self {
+        let mk = |ph: &'static str, val: &str, window: &mut Window, cx: &mut App| {
+            let v = val.to_string();
+            cx.new(|cx| InputState::new(window, cx).placeholder(ph).default_value(v))
+        };
         Self {
-            url: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("请输入 HTTP / HTTPS / 磁力下载链接")
-            }),
-            filename: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("留空则自动从链接识别文件名")
-            }),
-            save_dir: cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder("留空则按文件分类自动归档")
-                    .default_value(default_dir.to_string())
-            }),
+            url: mk("请输入 HTTP / HTTPS / 磁力下载链接", "", window, cx),
+            filename: mk("留空则自动从链接识别文件名", "", window, cx),
+            save_dir: mk("选择或输入保存目录", default_dir, window, cx),
+            speed_limit: mk("0(不限) / 2M / 500K", "", window, cx),
+            allow_overwrite,
+            referer: mk("可选 Referer，如 https://example.com/", "", window, cx),
+            user_agent: mk("可选自定义 User-Agent", "", window, cx),
+            cookie: mk("可选 Cookie 请求头（用于需登录态下载）", "", window, cx),
+            proxy: mk("可选单任务代理，留空沿用全局代理", "", window, cx),
         }
+    }
+
+    /// 组装高级 HTTP 请求头列表（供 aria2 `header` 参数使用）
+    pub fn build_headers(&self, cx: &App) -> Vec<String> {
+        let mut headers = Vec::new();
+        let referer = self.referer.read(cx).value().trim().to_string();
+        if !referer.is_empty() {
+            headers.push(format!("Referer: {referer}"));
+        }
+        let ua = self.user_agent.read(cx).value().trim().to_string();
+        if !ua.is_empty() {
+            headers.push(format!("User-Agent: {ua}"));
+        }
+        let cookie = self.cookie.read(cx).value().trim().to_string();
+        if !cookie.is_empty() {
+            headers.push(format!("Cookie: {cookie}"));
+        }
+        headers
     }
 }
 
-/// 通用居中模态窗口外壳（半透明遮罩 + 标题栏 + 内容区 + 底部按钮区）
-fn modal_shell(
+/// 通用居中模态窗口外壳
+pub fn modal_shell(
     title: &'static str,
     width: f32,
     p: IdmPalette,
@@ -69,13 +101,7 @@ fn modal_shell(
                         .bg(p.header_bg)
                         .border_b_1()
                         .border_color(p.border)
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_semibold()
-                                .text_color(p.text)
-                                .child(title),
-                        )
+                        .child(div().text_sm().font_semibold().text_color(p.text).child(title))
                         .child(
                             div()
                                 .id("modal-close-x")
@@ -107,74 +133,45 @@ fn modal_shell(
 }
 
 /// 表单单行（左标签 + 右输入框）
-fn form_row(label: &'static str, input: &Entity<InputState>, p: IdmPalette) -> impl IntoElement {
+pub fn form_row(label: &'static str, input: &Entity<InputState>, p: IdmPalette) -> impl IntoElement {
     div()
         .flex()
         .items_center()
         .gap_3()
-        .child(div().w(px(88.0)).text_xs().text_color(p.text).child(label))
+        .child(div().w(px(96.0)).text_xs().text_color(p.text).child(label))
         .child(div().flex_1().child(Input::new(input)))
 }
 
-/// 渲染「新建下载任务」居中弹窗
-pub fn render_add_task_modal(
-    inputs: &AddTaskInputs,
+/// 勾选开关行
+pub fn checkbox_row(
+    id: &'static str,
+    label: &'static str,
+    checked: bool,
     p: IdmPalette,
-    on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    on_submit: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let body = div()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(form_row("下载地址:", &inputs.url, p))
-        .child(form_row("保存文件名:", &inputs.filename, p))
-        .child(form_row("保存目录:", &inputs.save_dir, p));
-
-    let footer = div()
+    div()
+        .id(id)
         .flex()
         .items_center()
         .gap_2()
-        .child(Button::new("btn-add-cancel").label("取消").on_click(on_cancel))
+        .pl(px(108.0))
+        .cursor_pointer()
+        .on_click(on_toggle)
         .child(
-            Button::new("btn-add-ok")
-                .primary()
-                .label("开始下载")
-                .on_click(on_submit),
-        );
-
-    modal_shell("新建下载任务", 520.0, p, on_close, body, footer)
-}
-
-/// 渲染「选项设置」居中弹窗
-pub fn render_settings_modal(
-    inputs: &SettingsInputs,
-    p: IdmPalette,
-    on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    on_save: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let body = div()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(form_row("默认下载目录:", &inputs.download_dir, p))
-        .child(form_row("单任务分片数:", &inputs.split, p))
-        .child(form_row("全局下载限速:", &inputs.speed_limit, p))
-        .child(form_row("代理服务器:", &inputs.proxy, p));
-
-    let footer = div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(Button::new("btn-opt-cancel").label("取消").on_click(on_cancel))
-        .child(
-            Button::new("btn-opt-save")
-                .primary()
-                .label("保存并应用")
-                .on_click(on_save),
-        );
-
-    modal_shell("选项设置", 500.0, p, on_close, body, footer)
+            div()
+                .w(px(16.0))
+                .h(px(16.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .border_1()
+                .border_color(p.border)
+                .bg(if checked { rgb(0x2563eb) } else { p.panel_bg })
+                .text_xs()
+                .text_color(rgb(0xffffff))
+                .child(if checked { "✓" } else { "" }),
+        )
+        .child(div().text_xs().text_color(p.text).child(label))
 }

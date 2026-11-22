@@ -11,12 +11,18 @@ use tokio::sync::mpsc;
 /// 发往后台引擎的控制指令
 #[derive(Debug, Clone)]
 pub enum EngineCommand {
-    /// 提交新下载任务到 aria2
+    /// 提交新下载任务到 aria2（支持覆盖策略、单任务限速、自定义 HTTP 头与代理）
     AddUri {
         url: String,
         filename: Option<String>,
         save_dir: Option<PathBuf>,
         split: u32,
+        max_connection_per_server: u32,
+        min_split_size: String,
+        allow_overwrite: bool,
+        max_download_limit: Option<String>,
+        headers: Vec<String>,
+        proxy: Option<String>,
     },
     /// 暂停单个任务
     Pause(String),
@@ -26,10 +32,15 @@ pub enum EngineCommand {
     PauseAll,
     /// 删除单个任务（同时清理停止记录）
     Remove(String),
-    /// 实时更新 aria2 全局参数（限速、代理等）
+    /// 实时更新 aria2 全局参数（限速、并发、代理、重试等）
     ApplyGlobalOptions {
+        max_concurrent_downloads: u32,
         max_overall_download_limit: String,
+        max_overall_upload_limit: String,
         proxy: Option<String>,
+        user_agent: Option<String>,
+        timeout_secs: u32,
+        max_tries: u32,
     },
     /// 立即触发一次状态同步
     SyncNow,
@@ -145,13 +156,23 @@ async fn handle_command(
             filename,
             save_dir,
             split,
+            max_connection_per_server,
+            min_split_size,
+            allow_overwrite,
+            max_download_limit,
+            headers,
+            proxy,
         } => {
             let opts = AddUriOptions {
                 dir: save_dir.map(|p| p.to_string_lossy().into_owned()),
                 out: filename.filter(|s| !s.trim().is_empty()),
                 split: Some(split.to_string()),
-                max_connection_per_server: Some(split.min(16).to_string()),
-                ..Default::default()
+                max_connection_per_server: Some(max_connection_per_server.min(16).to_string()),
+                min_split_size: Some(min_split_size),
+                header: headers,
+                all_proxy: proxy.filter(|s| !s.trim().is_empty()),
+                max_download_limit: max_download_limit.filter(|s| !s.trim().is_empty()),
+                allow_overwrite: Some(if allow_overwrite { "true" } else { "false" }.into()),
             };
             client
                 .add_uri(vec![url], Some(opts))
@@ -171,12 +192,27 @@ async fn handle_command(
                 .map_err(|e| e.to_string())
         }
         EngineCommand::ApplyGlobalOptions {
+            max_concurrent_downloads,
             max_overall_download_limit,
+            max_overall_upload_limit,
             proxy,
+            user_agent,
+            timeout_secs,
+            max_tries,
         } => {
             let mut opts = aria2_rpc::GlobalOptions::new();
+            opts.insert(
+                "max-concurrent-downloads".into(),
+                max_concurrent_downloads.to_string(),
+            );
             opts.insert("max-overall-download-limit".into(), max_overall_download_limit);
+            opts.insert("max-overall-upload-limit".into(), max_overall_upload_limit);
             opts.insert("all-proxy".into(), proxy.unwrap_or_default());
+            if let Some(ua) = user_agent.filter(|s| !s.trim().is_empty()) {
+                opts.insert("user-agent".into(), ua);
+            }
+            opts.insert("timeout".into(), timeout_secs.to_string());
+            opts.insert("max-tries".into(), max_tries.to_string());
             client
                 .change_global_option(opts)
                 .await
