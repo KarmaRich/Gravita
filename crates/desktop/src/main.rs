@@ -2,6 +2,7 @@
 
 mod state;
 mod ui;
+mod ui_parts;
 
 use gpui_kit::component::Root;
 use gpui_kit::*;

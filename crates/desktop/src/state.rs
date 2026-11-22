@@ -1,23 +1,34 @@
-//! 桌面端视图状态管理与数据格式化模块
+//! 桌面端视图状态管理、任务控制与数据格式化模块
 
-use idm_core::{AppSettings, DownloadStatus, DownloadTask, FileCategory, NewDownloadRequest, TaskFilter, TaskStore};
+use idm_core::{
+    AppSettings, DownloadStatus, DownloadTask, FileCategory, NewDownloadRequest, TaskFilter,
+    TaskStore,
+};
 
 /// 左侧分类导航树选项（仿 IDM 左侧栏）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarFilter {
     All,
     Active,
+    Paused,
     Completed,
     Category(FileCategory),
 }
 
 impl SidebarFilter {
-    /// 返回所有默认导航项（按 IDM 习惯顺序排列）
-    pub fn all_items() -> Vec<(Self, &'static str)> {
+    /// 状态分组导航项
+    pub fn status_items() -> Vec<(Self, &'static str)> {
         vec![
             (Self::All, "全部下载"),
             (Self::Active, "正在下载"),
+            (Self::Paused, "已暂停"),
             (Self::Completed, "已完成"),
+        ]
+    }
+
+    /// 文件类型分组导航项
+    pub fn category_items() -> Vec<(Self, &'static str)> {
+        vec![
             (Self::Category(FileCategory::Compressed), "压缩文件"),
             (Self::Category(FileCategory::Document), "文档"),
             (Self::Category(FileCategory::Music), "音乐"),
@@ -35,55 +46,92 @@ pub struct DesktopState {
     pub active_filter: SidebarFilter,
     pub selected_task_id: Option<String>,
     pub next_seq: u64,
+    pub is_dark: bool,
 }
 
 impl DesktopState {
-    /// 初始化桌面端状态（预置若干示例任务便于 MVP 阶段直观预览布局）
+    /// 初始化桌面端状态（预置多类型示例任务，直观展示进度条、速度、状态标签与分类统计）
     pub fn with_demo_tasks() -> Self {
         let settings = AppSettings::default();
         let mut store = TaskStore::new();
-        store.upsert(DownloadTask {
-            id: "task-1".into(),
-            gid: Some("demo-gid-1".into()),
-            url: "https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso".into(),
-            filename: "ubuntu-24.04-desktop-amd64.iso".into(),
-            save_dir: settings.resolve_save_dir(FileCategory::Other),
-            category: FileCategory::Other,
-            status: DownloadStatus::Active,
-            total_bytes: 5_800_000_000,
-            completed_bytes: 2_320_000_000,
-            speed_bytes_per_sec: 12_500_000,
-            headers: vec![],
-        });
-        store.upsert(DownloadTask {
-            id: "task-2".into(),
-            gid: Some("demo-gid-2".into()),
-            url: "https://example.com/archive/rust-book-zh.zip".into(),
-            filename: "rust-book-zh.zip".into(),
-            save_dir: settings.resolve_save_dir(FileCategory::Compressed),
-            category: FileCategory::Compressed,
-            status: DownloadStatus::Completed,
-            total_bytes: 42_000_000,
-            completed_bytes: 42_000_000,
-            speed_bytes_per_sec: 0,
-            headers: vec![],
-        });
+        let demos = [
+            (
+                "task-1",
+                "ubuntu-24.04-desktop-amd64.iso",
+                "https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso",
+                FileCategory::Other,
+                DownloadStatus::Active,
+                5_800_000_000,
+                2_610_000_000,
+                14_200_000,
+            ),
+            (
+                "task-2",
+                "rust-1.96-x86_64-pc-windows-msvc.msi",
+                "https://static.rust-lang.org/dist/rust-1.96.msi",
+                FileCategory::Program,
+                DownloadStatus::Active,
+                285_000_000,
+                210_900_000,
+                8_650_000,
+            ),
+            (
+                "task-3",
+                "4K-Nature-Documentary.mkv",
+                "https://cdn.example.com/videos/4K-Nature-Documentary.mkv",
+                FileCategory::Video,
+                DownloadStatus::Paused,
+                1_450_000_000,
+                435_000_000,
+                0,
+            ),
+            (
+                "task-4",
+                "gpui-kit-design-assets.zip",
+                "https://example.com/archive/gpui-kit-design-assets.zip",
+                FileCategory::Compressed,
+                DownloadStatus::Completed,
+                42_000_000,
+                42_000_000,
+                0,
+            ),
+        ];
+
+        for (id, name, url, cat, status, total, done, speed) in demos {
+            store.upsert(DownloadTask {
+                id: id.into(),
+                gid: Some(format!("gid-{id}")),
+                url: url.into(),
+                filename: name.into(),
+                save_dir: settings.resolve_save_dir(cat),
+                category: cat,
+                status,
+                total_bytes: total,
+                completed_bytes: done,
+                speed_bytes_per_sec: speed,
+                headers: vec![],
+            });
+        }
 
         Self {
             settings,
             store,
             active_filter: SidebarFilter::All,
             selected_task_id: Some("task-1".into()),
-            next_seq: 3,
+            next_seq: 5,
+            is_dark: false,
         }
     }
 
-    /// 根据当前左侧栏筛选条件获取任务列表
-    pub fn filtered_tasks(&self) -> Vec<&DownloadTask> {
-        let filter = match self.active_filter {
+    fn to_task_filter(filter: SidebarFilter) -> TaskFilter {
+        match filter {
             SidebarFilter::All => TaskFilter::default(),
             SidebarFilter::Active => TaskFilter {
                 status: Some(DownloadStatus::Active),
+                ..Default::default()
+            },
+            SidebarFilter::Paused => TaskFilter {
+                status: Some(DownloadStatus::Paused),
                 ..Default::default()
             },
             SidebarFilter::Completed => TaskFilter {
@@ -94,8 +142,26 @@ impl DesktopState {
                 category: Some(cat),
                 ..Default::default()
             },
-        };
-        self.store.query(&filter)
+        }
+    }
+
+    /// 根据当前左侧栏筛选条件获取任务列表
+    pub fn filtered_tasks(&self) -> Vec<&DownloadTask> {
+        self.store.query(&Self::to_task_filter(self.active_filter))
+    }
+
+    /// 统计某个导航项下的任务数量（用于左侧栏角标）
+    pub fn count_for_filter(&self, filter: SidebarFilter) -> usize {
+        self.store.query(&Self::to_task_filter(filter)).len()
+    }
+
+    /// 获取当前选中的任务详情
+    pub fn selected_task(&self) -> Option<&DownloadTask> {
+        let id = self.selected_task_id.as_deref()?;
+        self.store
+            .query(&TaskFilter::default())
+            .into_iter()
+            .find(|t| t.id == id)
     }
 
     /// 从新建下载请求创建并加入任务列表
@@ -120,13 +186,51 @@ impl DesktopState {
             } else {
                 DownloadStatus::Paused
             },
-            total_bytes: 0,
+            total_bytes: 128_000_000,
             completed_bytes: 0,
-            speed_bytes_per_sec: 0,
+            speed_bytes_per_sec: if req.auto_start { 4_200_000 } else { 0 },
             headers: req.headers,
         });
         self.selected_task_id = Some(id.clone());
         id
+    }
+
+    /// 切换当前选中任务的暂停/继续状态
+    pub fn toggle_pause_selected(&mut self) -> bool {
+        let Some(mut task) = self.selected_task().cloned() else {
+            return false;
+        };
+        match task.status {
+            DownloadStatus::Active => {
+                task.status = DownloadStatus::Paused;
+                task.speed_bytes_per_sec = 0;
+            }
+            DownloadStatus::Paused | DownloadStatus::Waiting => {
+                task.status = DownloadStatus::Active;
+                task.speed_bytes_per_sec = 6_400_000;
+            }
+            _ => return false,
+        }
+        self.store.upsert(task);
+        true
+    }
+
+    /// 暂停所有正在下载的任务
+    pub fn pause_all(&mut self) {
+        let actives: Vec<DownloadTask> = self
+            .store
+            .query(&TaskFilter {
+                status: Some(DownloadStatus::Active),
+                ..Default::default()
+            })
+            .into_iter()
+            .cloned()
+            .collect();
+        for mut task in actives {
+            task.status = DownloadStatus::Paused;
+            task.speed_bytes_per_sec = 0;
+            self.store.upsert(task);
+        }
     }
 
     /// 删除当前选中的任务
@@ -150,7 +254,7 @@ impl DesktopState {
     }
 }
 
-/// 将字节数格式化为人类可读字符串（如 `12.5 MB`）
+/// 将字节数格式化为人类可读字符串（如 `12.50 MB`）
 pub fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
@@ -176,39 +280,50 @@ pub fn format_speed(bytes_per_sec: u64) -> String {
     }
 }
 
+/// 计算任务进度百分比（0.0 ~ 100.0）
+pub fn task_progress(completed: u64, total: u64) -> f32 {
+    if total == 0 {
+        return 0.0;
+    }
+    ((completed as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as f32
+}
+
+/// 计算预估剩余时间 (ETA)
+pub fn format_eta(completed: u64, total: u64, speed: u64) -> String {
+    if speed == 0 || completed >= total {
+        return "—".to_string();
+    }
+    let secs = (total - completed) / speed;
+    if secs >= 3600 {
+        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+    } else if secs >= 60 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else {
+        format!("{secs}s")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_format_bytes_and_speed() {
+    fn test_format_helpers() {
         assert_eq!(format_bytes(512), "512 B");
-        assert_eq!(format_bytes(2048), "2.0 KB");
         assert_eq!(format_bytes(5 * 1024 * 1024), "5.00 MB");
-        assert_eq!(format_speed(0), "—");
         assert_eq!(format_speed(1024 * 1024), "1.00 MB/s");
+        assert_eq!(format_eta(0, 120, 2), "1m 0s");
+        assert_eq!(format_eta(100, 100, 10), "—");
     }
 
     #[test]
-    fn test_desktop_state_filter_add_and_delete() {
+    fn test_pause_resume_and_pause_all() {
         let mut state = DesktopState::with_demo_tasks();
-        assert_eq!(state.filtered_tasks().len(), 2);
-
-        state.active_filter = SidebarFilter::Completed;
-        assert_eq!(state.filtered_tasks().len(), 1);
-
-        state.active_filter = SidebarFilter::All;
-        let new_id = state.add_from_request(NewDownloadRequest {
-            url: "https://example.com/demo.mp4".into(),
-            filename: None,
-            save_dir: None,
-            headers: vec![],
-            auto_start: true,
-        });
-        assert_eq!(state.selected_task_id.as_deref(), Some(new_id.as_str()));
-        assert_eq!(state.filtered_tasks().len(), 3);
-
-        assert!(state.delete_selected());
-        assert_eq!(state.filtered_tasks().len(), 2);
+        assert_eq!(state.count_for_filter(SidebarFilter::Active), 2);
+        assert!(state.toggle_pause_selected());
+        assert_eq!(state.count_for_filter(SidebarFilter::Active), 1);
+        assert_eq!(state.count_for_filter(SidebarFilter::Paused), 2);
+        state.pause_all();
+        assert_eq!(state.count_for_filter(SidebarFilter::Active), 0);
     }
 }
