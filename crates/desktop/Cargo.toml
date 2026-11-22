@@ -1,0 +1,11 @@
+[package]
+name = "idm-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aria2-rpc = { path = "../aria2-rpc" }
+idm-core = { path = "../core" }
+# GPUI 组件库，待阶段一实现 UI 视图时启用具体窗口与组件渲染
+# gpui-kit.workspace = true

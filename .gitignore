@@ -1,0 +1,20 @@
+# Rust / Cargo
+/target
+**/*.rs.bk
+
+# Node / 浏览器插件
+extension/node_modules/
+extension/dist/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统与运行数据
+.DS_Store
+Thumbs.db
+*.db
+*.db-journal
+*.log

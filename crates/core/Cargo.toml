@@ -1,0 +1,11 @@
+[package]
+name = "idm-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aria2-rpc = { path = "../aria2-rpc" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

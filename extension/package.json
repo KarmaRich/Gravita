@@ -1,0 +1,10 @@
+{
+  "name": "idm-aria2-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "IDM-Aria2-RS 浏览器下载拦截插件 (Manifest V3)",
+  "scripts": {
+    "test": "node --test src/filter.test.ts"
+  }
+}

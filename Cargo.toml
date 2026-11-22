@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/aria2-rpc",
+    "crates/core",
+    "crates/desktop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["idm-aria2-rs contributors"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+gpui-kit = "0.10.0"
