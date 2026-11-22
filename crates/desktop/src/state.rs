@@ -15,30 +15,6 @@ pub enum SidebarFilter {
     Category(FileCategory),
 }
 
-impl SidebarFilter {
-    /// 状态分组导航项
-    pub fn status_items() -> Vec<(Self, &'static str)> {
-        vec![
-            (Self::All, "全部下载"),
-            (Self::Active, "正在下载"),
-            (Self::Paused, "已暂停"),
-            (Self::Completed, "已完成"),
-        ]
-    }
-
-    /// 文件类型分组导航项
-    pub fn category_items() -> Vec<(Self, &'static str)> {
-        vec![
-            (Self::Category(FileCategory::Compressed), "压缩文件"),
-            (Self::Category(FileCategory::Document), "文档"),
-            (Self::Category(FileCategory::Music), "音乐"),
-            (Self::Category(FileCategory::Program), "程序"),
-            (Self::Category(FileCategory::Video), "视频"),
-            (Self::Category(FileCategory::Other), "其他"),
-        ]
-    }
-}
-
 /// 桌面端核心视图状态
 pub struct DesktopState {
     pub settings: AppSettings,
@@ -46,7 +22,6 @@ pub struct DesktopState {
     pub active_filter: SidebarFilter,
     pub selected_task_id: Option<String>,
     pub next_seq: u64,
-    pub is_dark: bool,
 }
 
 impl DesktopState {
@@ -119,7 +94,6 @@ impl DesktopState {
             active_filter: SidebarFilter::All,
             selected_task_id: Some("task-1".into()),
             next_seq: 5,
-            is_dark: false,
         }
     }
 

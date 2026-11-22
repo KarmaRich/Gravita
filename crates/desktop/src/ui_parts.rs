@@ -1,182 +1,179 @@
-//! 界面调色板与任务表格/详情辅助渲染组件
+//! 经典 IDM 风格配色、工具栏大图标按钮与表格行渲染组件
 
 use crate::state::{format_bytes, format_eta, format_speed, task_progress};
 use gpui_kit::base::StyledExt;
 use gpui_kit::*;
 use idm_core::{DownloadStatus, DownloadTask};
 
-/// 桌面端浅色/深色主题调色板
+/// 经典 Windows / IDM 界面调色板
 #[derive(Clone, Copy)]
-pub struct Palette {
-    pub bg: Rgba,
-    pub surface: Rgba,
-    pub sidebar_bg: Rgba,
+pub struct IdmPalette {
+    pub menu_bg: Rgba,
+    pub toolbar_bg: Rgba,
+    pub panel_bg: Rgba,
+    pub header_bg: Rgba,
     pub border: Rgba,
     pub text: Rgba,
     pub muted: Rgba,
-    pub primary: Rgba,
-    pub row_selected: Rgba,
-    pub row_alt: Rgba,
-    pub progress_track: Rgba,
+    pub selected_bg: Rgba,
+    pub selected_border: Rgba,
+    pub progress_fill: Rgba,
+    pub progress_bg: Rgba,
 }
 
-impl Palette {
-    pub fn for_mode(is_dark: bool) -> Self {
-        if is_dark {
-            Self {
-                bg: rgb(0x111827),
-                surface: rgb(0x1f2937),
-                sidebar_bg: rgb(0x161f2e),
-                border: rgb(0x374151),
-                text: rgb(0xf3f4f6),
-                muted: rgb(0x9ca3af),
-                primary: rgb(0x3b82f6),
-                row_selected: rgb(0x1e3a5f),
-                row_alt: rgb(0x182132),
-                progress_track: rgb(0x374151),
-            }
-        } else {
-            Self {
-                bg: rgb(0xf8fafc),
-                surface: rgb(0xffffff),
-                sidebar_bg: rgb(0xf1f5f9),
-                border: rgb(0xe2e8f0),
-                text: rgb(0x0f172a),
-                muted: rgb(0x64748b),
-                primary: rgb(0x2563eb),
-                row_selected: rgb(0xdbeafe),
-                row_alt: rgb(0xf8fafc),
-                progress_track: rgb(0xe2e8f0),
-            }
+impl IdmPalette {
+    pub fn classic() -> Self {
+        Self {
+            menu_bg: rgb(0xf5f6f7),
+            toolbar_bg: rgb(0xf0f4f9),
+            panel_bg: rgb(0xffffff),
+            header_bg: rgb(0xf3f4f6),
+            border: rgb(0xd0d7de),
+            text: rgb(0x111827),
+            muted: rgb(0x57606a),
+            selected_bg: rgb(0xcce8ff),
+            selected_border: rgb(0x99d1ff),
+            progress_fill: rgb(0x2da44e),
+            progress_bg: rgb(0xe5e7eb),
         }
     }
 }
 
-/// 根据下载状态返回中文标签与对应的强调色
-pub fn status_badge_style(status: DownloadStatus) -> (&'static str, Rgba, Rgba) {
-    match status {
-        DownloadStatus::Active => ("下载中", rgb(0x1d4ed8), rgb(0xdbeafe)),
-        DownloadStatus::Waiting => ("等待中", rgb(0x475569), rgb(0xe2e8f0)),
-        DownloadStatus::Paused => ("已暂停", rgb(0xb45309), rgb(0xfef3c7)),
-        DownloadStatus::Completed => ("已完成", rgb(0x15803d), rgb(0xdcfce7)),
-        DownloadStatus::Error => ("出错", rgb(0xb91c1c), rgb(0xfee2e2)),
-    }
-}
-
-/// 渲染任务表格表头
-pub fn render_table_header(p: Palette) -> impl IntoElement {
+/// 渲染经典 IDM 顶部菜单栏（任务 / 文件 / 下载 / 查看 / 帮助）
+pub fn render_menubar(p: IdmPalette) -> impl IntoElement {
+    let menus = ["任务(T)", "文件(F)", "下载(D)", "查看(V)", "帮助(H)"];
     div()
         .flex()
         .items_center()
-        .px_4()
-        .py_2()
-        .bg(p.sidebar_bg)
+        .gap_1()
+        .px_2()
+        .py_1()
+        .bg(p.menu_bg)
         .border_b_1()
         .border_color(p.border)
         .text_xs()
-        .font_semibold()
-        .text_color(p.muted)
-        .child(div().flex_1().child("文件名"))
-        .child(div().w(px(96.0)).child("大小"))
-        .child(div().w(px(170.0)).child("进度"))
-        .child(div().w(px(100.0)).child("速度"))
-        .child(div().w(px(80.0)).child("剩余时间"))
-        .child(div().w(px(76.0)).child("状态"))
+        .text_color(p.text)
+        .children(menus.into_iter().map(|m| {
+            div()
+                .px_2()
+                .py_0p5()
+                .rounded_sm()
+                .cursor_pointer()
+                .child(m)
+        }))
 }
 
-/// 渲染单行任务（含可视化进度条与彩色状态徽章）
-pub fn render_task_row(
-    idx: usize,
-    task: &DownloadTask,
-    is_selected: bool,
-    p: Palette,
+/// 渲染 IDM 经典“上图标 + 下文字”工具栏按钮
+pub fn idm_tool_button(
+    id: &'static str,
+    icon: &'static str,
+    icon_color: Rgba,
+    label: &'static str,
+    p: IdmPalette,
 ) -> Stateful<Div> {
-    let pct = task_progress(task.completed_bytes, task.total_bytes);
-    let (status_text, status_fg, status_bg) = status_badge_style(task.status);
-    let row_bg = if is_selected {
-        p.row_selected
-    } else if idx % 2 == 1 {
-        p.row_alt
-    } else {
-        p.surface
+    div()
+        .id(id)
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .w(px(64.0))
+        .py_1p5()
+        .rounded_sm()
+        .cursor_pointer()
+        .child(div().text_lg().text_color(icon_color).child(icon))
+        .child(div().text_xs().text_color(p.text).child(label))
+}
+
+/// 渲染经典 IDM 任务列表表头（带列分隔线）
+pub fn render_idm_table_header(p: IdmPalette) -> impl IntoElement {
+    let col = |w: Option<f32>, label: &'static str| {
+        let base = div()
+            .px_2()
+            .py_1()
+            .border_r_1()
+            .border_color(p.border)
+            .text_xs()
+            .font_medium()
+            .text_color(p.text)
+            .child(label);
+        match w {
+            Some(width) => base.w(px(width)),
+            None => base.flex_1(),
+        }
     };
 
     div()
-        .id(("task-row", idx))
         .flex()
         .items_center()
-        .px_4()
-        .py_2p5()
-        .bg(row_bg)
+        .bg(p.header_bg)
         .border_b_1()
         .border_color(p.border)
-        .text_sm()
+        .child(col(None, "文件名"))
+        .child(col(Some(88.0), "大小"))
+        .child(col(Some(145.0), "状态"))
+        .child(col(Some(82.0), "剩余时间"))
+        .child(col(Some(96.0), "传输速率"))
+        .child(col(Some(100.0), "分类"))
+}
+
+/// 渲染经典 IDM 紧凑型任务行
+pub fn render_idm_task_row(
+    idx: usize,
+    task: &DownloadTask,
+    is_selected: bool,
+    p: IdmPalette,
+) -> Stateful<Div> {
+    let pct = task_progress(task.completed_bytes, task.total_bytes);
+    let status_text = match task.status {
+        DownloadStatus::Active => format!("{pct:.1}%"),
+        DownloadStatus::Waiting => "等待中".to_string(),
+        DownloadStatus::Paused => format!("已暂停 ({pct:.1}%)"),
+        DownloadStatus::Completed => "已完成".to_string(),
+        DownloadStatus::Error => "下载出错".to_string(),
+    };
+
+    div()
+        .id(("idm-row", idx))
+        .flex()
+        .items_center()
+        .py_1()
+        .bg(if is_selected { p.selected_bg } else { p.panel_bg })
+        .border_b_1()
+        .border_color(if is_selected { p.selected_border } else { rgb(0xf0f0f0) })
+        .text_xs()
         .text_color(p.text)
         .cursor_pointer()
         .child(
             div()
                 .flex_1()
-                .flex()
-                .flex_col()
-                .pr_3()
+                .px_2()
                 .overflow_hidden()
-                .child(div().font_medium().child(task.filename.clone()))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(p.muted)
-                        .child(task.category.display_name()),
-                ),
+                .child(task.filename.clone()),
         )
+        .child(div().w(px(88.0)).px_2().child(format_bytes(task.total_bytes)))
         .child(
             div()
-                .w(px(96.0))
-                .text_xs()
-                .text_color(p.muted)
-                .child(format_bytes(task.total_bytes)),
-        )
-        .child(
-            div()
-                .w(px(170.0))
-                .pr_4()
+                .w(px(145.0))
+                .px_2()
                 .flex()
-                .flex_col()
-                .gap_1()
+                .items_center()
+                .gap_1p5()
                 .child(
                     div()
-                        .w_full()
-                        .h(px(6.0))
-                        .rounded_full()
-                        .bg(p.progress_track)
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .h_full()
-                                .w(relative(pct / 100.0))
-                                .bg(if task.status == DownloadStatus::Completed {
-                                    rgb(0x16a34a)
-                                } else {
-                                    p.primary
-                                }),
-                        ),
+                        .w(px(56.0))
+                        .h(px(10.0))
+                        .bg(p.progress_bg)
+                        .border_1()
+                        .border_color(p.border)
+                        .child(div().h_full().w(relative(pct / 100.0)).bg(p.progress_fill)),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(p.muted)
-                        .child(format!("{pct:.1}%")),
-                ),
+                .child(status_text),
         )
         .child(
             div()
-                .w(px(100.0))
-                .text_xs()
-                .child(format_speed(task.speed_bytes_per_sec)),
-        )
-        .child(
-            div()
-                .w(px(80.0))
-                .text_xs()
+                .w(px(82.0))
+                .px_2()
                 .text_color(p.muted)
                 .child(format_eta(
                     task.completed_bytes,
@@ -185,37 +182,16 @@ pub fn render_task_row(
                 )),
         )
         .child(
-            div().w(px(76.0)).child(
-                div()
-                    .px_2()
-                    .py_0p5()
-                    .rounded_full()
-                    .bg(status_bg)
-                    .text_color(status_fg)
-                    .text_xs()
-                    .font_medium()
-                    .child(status_text),
-            ),
+            div()
+                .w(px(96.0))
+                .px_2()
+                .child(format_speed(task.speed_bytes_per_sec)),
         )
-}
-
-/// 渲染底部选中任务详情条
-pub fn render_detail_panel(task: Option<&DownloadTask>, p: Palette) -> impl IntoElement {
-    let content = match task {
-        Some(t) => format!(
-            "保存路径: {}   |   来源: {}",
-            t.save_dir.display(),
-            t.url
-        ),
-        None => "点击列表中的下载任务以查看详细路径与来源链接".to_string(),
-    };
-    div()
-        .px_4()
-        .py_2()
-        .bg(p.surface)
-        .border_t_1()
-        .border_color(p.border)
-        .text_xs()
-        .text_color(p.muted)
-        .child(content)
+        .child(
+            div()
+                .w(px(100.0))
+                .px_2()
+                .text_color(p.muted)
+                .child(task.category.display_name()),
+        )
 }
