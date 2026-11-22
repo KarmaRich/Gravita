@@ -1,5 +1,6 @@
 //! IDM-Aria2-RS 桌面客户端入口（基于 Rust + GPUI + gpui-kit）
 
+mod engine;
 mod state;
 mod ui;
 mod ui_parts;

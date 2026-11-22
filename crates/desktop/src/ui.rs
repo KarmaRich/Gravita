@@ -1,26 +1,96 @@
-//! 仿经典 IDM (Internet Download Manager) 桌面主界面
+//! 仿经典 IDM (Internet Download Manager) 桌面主界面（已接入真实 aria2 后台引擎）
 
+use crate::engine::{DownloadEngine, EngineCommand, EngineSnapshot};
 use crate::state::{DesktopState, SidebarFilter, format_speed};
 use crate::ui_parts::{
     IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row, render_menubar,
 };
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::*;
-use idm_core::{FileCategory, NewDownloadRequest};
+use idm_core::{DownloadStatus, DownloadTask, FileCategory};
 
 /// IDM 主窗口视图实体
 pub struct IdmMainView {
     state: DesktopState,
+    engine: DownloadEngine,
+    snapshot: EngineSnapshot,
+    show_add_bar: bool,
+    url_input: Entity<InputState>,
 }
 
 impl IdmMainView {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let state = DesktopState::with_demo_tasks();
+        let engine = DownloadEngine::start(state.settings.aria2.clone());
+        let url_input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入 HTTP/HTTPS/磁力下载链接..."));
+
+        // 启动轻量 UI 定时刷新循环：每 500ms 同步一次后台 aria2 引擎快照
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+                let ok = this.update(cx, |view, cx| {
+                    view.snapshot = view.engine.snapshot();
+                    cx.notify();
+                });
+                if ok.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+
         Self {
-            state: DesktopState::with_demo_tasks(),
+            state,
+            engine,
+            snapshot: EngineSnapshot::default(),
+            show_add_bar: false,
+            url_input,
         }
     }
 
-    /// 渲染经典 IDM 大图标工具栏
+    /// 返回当前视图应展示的任务列表（已连接 aria2 时展示真实任务，否则展示空或离线提示）
+    fn visible_tasks(&self) -> Vec<DownloadTask> {
+        let source: Vec<DownloadTask> = if self.snapshot.connected {
+            self.snapshot.tasks.clone()
+        } else {
+            Vec::new()
+        };
+
+        source
+            .into_iter()
+            .filter(|t| match self.state.active_filter {
+                SidebarFilter::All => true,
+                SidebarFilter::Active => t.status == DownloadStatus::Active,
+                SidebarFilter::Paused => t.status == DownloadStatus::Paused,
+                SidebarFilter::Completed => t.status == DownloadStatus::Completed,
+                SidebarFilter::Category(cat) => t.category == cat,
+            })
+            .collect()
+    }
+
+    /// 统计某个分类下的真实任务数
+    fn count_for(&self, filter: SidebarFilter) -> usize {
+        if !self.snapshot.connected {
+            return 0;
+        }
+        self.snapshot
+            .tasks
+            .iter()
+            .filter(|t| match filter {
+                SidebarFilter::All => true,
+                SidebarFilter::Active => t.status == DownloadStatus::Active,
+                SidebarFilter::Paused => t.status == DownloadStatus::Paused,
+                SidebarFilter::Completed => t.status == DownloadStatus::Completed,
+                SidebarFilter::Category(cat) => t.category == cat,
+            })
+            .count()
+    }
+
+    /// 渲染经典 IDM 大图标工具栏（全部绑定真实 aria2 控制指令）
     fn render_toolbar(&self, p: IdmPalette, cx: &mut Context<Self>) -> impl IntoElement {
         let divider = || div().w(px(1.0)).h(px(36.0)).mx_1().bg(p.border);
 
@@ -35,52 +105,91 @@ impl IdmMainView {
             .child(
                 idm_tool_button("tb-add", "＋", rgb(0x16a34a), "新建任务", p).on_click(
                     cx.listener(|this, _, _, cx| {
-                        this.state.add_from_request(NewDownloadRequest {
-                            url: "https://example.com/release/idm-demo-package.zip".into(),
-                            filename: None,
-                            save_dir: None,
-                            headers: vec![],
-                            auto_start: true,
-                        });
+                        this.show_add_bar = !this.show_add_bar;
                         cx.notify();
                     }),
                 ),
             )
             .child(
                 idm_tool_button("tb-resume", "▶", rgb(0x16a34a), "继续", p).on_click(
-                    cx.listener(|this, _, _, cx| {
-                        this.state.toggle_pause_selected();
-                        cx.notify();
+                    cx.listener(|this, _, _, _| {
+                        if let Some(gid) = this.state.selected_task_id.clone() {
+                            this.engine.send(EngineCommand::Unpause(gid));
+                        }
                     }),
                 ),
             )
             .child(
                 idm_tool_button("tb-stop", "■", rgb(0xdc2626), "停止", p).on_click(
-                    cx.listener(|this, _, _, cx| {
-                        this.state.toggle_pause_selected();
-                        cx.notify();
+                    cx.listener(|this, _, _, _| {
+                        if let Some(gid) = this.state.selected_task_id.clone() {
+                            this.engine.send(EngineCommand::Pause(gid));
+                        }
                     }),
                 ),
             )
             .child(
                 idm_tool_button("tb-stop-all", "⏹", rgb(0xb91c1c), "全部停止", p).on_click(
-                    cx.listener(|this, _, _, cx| {
-                        this.state.pause_all();
-                        cx.notify();
+                    cx.listener(|this, _, _, _| {
+                        this.engine.send(EngineCommand::PauseAll);
                     }),
                 ),
             )
             .child(
                 idm_tool_button("tb-del", "✕", rgb(0xef4444), "删除", p).on_click(cx.listener(
-                    |this, _, _, cx| {
-                        this.state.delete_selected();
-                        cx.notify();
+                    |this, _, _, _| {
+                        if let Some(gid) = this.state.selected_task_id.take() {
+                            this.engine.send(EngineCommand::Remove(gid));
+                        }
                     },
                 )),
             )
             .child(divider())
-            .child(idm_tool_button("tb-opt", "⚙", rgb(0x2563eb), "选项", p))
-            .child(idm_tool_button("tb-sched", "🕒", rgb(0x0284c7), "计划任务", p))
+            .child(
+                idm_tool_button("tb-sync", "↻", rgb(0x2563eb), "刷新", p).on_click(cx.listener(
+                    |this, _, _, _| {
+                        this.engine.send(EngineCommand::SyncNow);
+                    },
+                )),
+            )
+    }
+
+    /// 渲染新建下载 URL 输入条
+    fn render_add_bar(&self, p: IdmPalette, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .bg(p.menu_bg)
+            .border_b_1()
+            .border_color(p.border)
+            .child(div().text_xs().text_color(p.text).child("下载链接:"))
+            .child(div().flex_1().child(Input::new(&self.url_input)))
+            .child(
+                Button::new("btn-submit-url")
+                    .primary()
+                    .label("开始下载")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let url = this.url_input.read(cx).value().trim().to_string();
+                        if !url.is_empty() {
+                            let cat = FileCategory::from_filename(&url);
+                            let save_dir = this.state.settings.resolve_save_dir(cat);
+                            this.engine.send(EngineCommand::AddUri {
+                                url,
+                                filename: None,
+                                save_dir: Some(save_dir),
+                                split: this.state.settings.default_split,
+                            });
+                            this.url_input.update(cx, |input, cx| {
+                                input.set_value("", window, cx);
+                            });
+                            this.show_add_bar = false;
+                            cx.notify();
+                        }
+                    })),
+            )
     }
 
     /// 渲染左侧经典 IDM 树形分类栏
@@ -125,7 +234,7 @@ impl IdmMainView {
                     .p_1()
                     .children(nodes.into_iter().map(|(id, filter, label, indent)| {
                         let is_active = filter == active;
-                        let count = self.state.count_for_filter(filter);
+                        let count = self.count_for(filter);
                         div()
                             .id(("tree", id))
                             .flex()
@@ -148,9 +257,9 @@ impl IdmMainView {
             )
     }
 
-    /// 渲染右侧任务列表表格
+    /// 渲染右侧真实任务列表表格
     fn render_task_list(&self, p: IdmPalette, cx: &mut Context<Self>) -> impl IntoElement {
-        let tasks = self.state.filtered_tasks();
+        let tasks = self.visible_tasks();
         let selected_id = self.state.selected_task_id.clone();
 
         div()
@@ -159,7 +268,27 @@ impl IdmMainView {
             .flex_1()
             .bg(p.panel_bg)
             .child(render_idm_table_header(p))
-            .child(
+            .child(if !self.snapshot.connected {
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(p.muted)
+                    .child("未连接到 aria2c，请先启动 aria2c --enable-rpc（默认端口 6800）")
+                    .into_any_element()
+            } else if tasks.is_empty() {
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(p.muted)
+                    .child("当前分类暂无下载任务，点击左上角「新建任务」添加真实下载链接")
+                    .into_any_element()
+            } else {
                 div()
                     .flex()
                     .flex_col()
@@ -167,25 +296,30 @@ impl IdmMainView {
                     .children(tasks.into_iter().enumerate().map(|(idx, task)| {
                         let task_id = task.id.clone();
                         let is_selected = selected_id.as_deref() == Some(task.id.as_str());
-                        render_idm_task_row(idx, task, is_selected, p).on_click(cx.listener(
+                        render_idm_task_row(idx, &task, is_selected, p).on_click(cx.listener(
                             move |this, _, _, cx| {
                                 this.state.selected_task_id = Some(task_id.clone());
                                 cx.notify();
                             },
                         ))
-                    })),
-            )
+                    }))
+                    .into_any_element()
+            })
     }
 
-    /// 渲染底部经典状态栏
+    /// 渲染底部经典状态栏（显示真实 aria2 在线状态与全局速度）
     fn render_statusbar(&self, p: IdmPalette) -> impl IntoElement {
-        let count = self.state.filtered_tasks().len();
-        let speed = format_speed(self.state.total_download_speed());
-        let selected_url = self
-            .state
-            .selected_task()
-            .map(|t| t.url.as_str())
-            .unwrap_or("就绪");
+        let status_text = if let Some(ver) = &self.snapshot.aria2_version {
+            format!("● 已连接 aria2 v{ver}")
+        } else {
+            "○ 未连接 aria2c".to_string()
+        };
+        let speed = format_speed(self.snapshot.global_download_speed);
+        let msg = self
+            .snapshot
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "就绪".to_string());
 
         div()
             .flex()
@@ -198,32 +332,34 @@ impl IdmMainView {
             .border_color(p.border)
             .text_xs()
             .text_color(p.muted)
-            .child(format!("{selected_url}"))
-            .child(format!(
-                "项目: {count}  |  速度: {speed}  |  aria2: {}",
-                self.state.settings.aria2.endpoint
-            ))
+            .child(msg)
+            .child(format!("速度: {speed}  |  {status_text}"))
     }
 }
 
 impl Render for IdmMainView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = IdmPalette::classic();
-        div()
+        let mut root = div()
             .flex()
             .flex_col()
             .size_full()
             .bg(p.panel_bg)
             .child(render_menubar(p))
-            .child(self.render_toolbar(p, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(self.render_category_tree(p, cx))
-                    .child(self.render_task_list(p, cx)),
-            )
-            .child(self.render_statusbar(p))
+            .child(self.render_toolbar(p, cx));
+
+        if self.show_add_bar {
+            root = root.child(self.render_add_bar(p, cx));
+        }
+
+        root.child(
+            div()
+                .flex()
+                .flex_1()
+                .overflow_hidden()
+                .child(self.render_category_tree(p, cx))
+                .child(self.render_task_list(p, cx)),
+        )
+        .child(self.render_statusbar(p))
     }
 }
