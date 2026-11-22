@@ -1,6 +1,8 @@
 //! 桌面端异步下载引擎控制器：负责后台连接 aria2 RPC、定时同步任务进度与执行控制指令
 
-use aria2_rpc::{AddUriOptions, Aria2Client, Aria2Config, Aria2TaskStatus};
+use aria2_rpc::{
+    AddUriOptions, Aria2Client, Aria2Config, Aria2Process, Aria2ProcessConfig, Aria2TaskStatus,
+};
 use idm_core::{DownloadStatus, DownloadTask, FileCategory};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -38,17 +40,40 @@ pub struct EngineSnapshot {
     pub last_error: Option<String>,
 }
 
-/// 桌面端后台下载引擎句柄
+/// 桌面端后台下载引擎句柄（同时托管内置 `aria2c` 子进程生命周期）
 pub struct DownloadEngine {
     cmd_tx: mpsc::UnboundedSender<EngineCommand>,
     snapshot: Arc<Mutex<EngineSnapshot>>,
+    /// 持有内置 aria2c 进程句柄，随引擎 Drop 时自动关闭清理
+    _managed_process: Option<Aria2Process>,
 }
 
 impl DownloadEngine {
-    /// 启动后台 Tokio 线程并开始定时同步 aria2 状态
-    pub fn start(config: Aria2Config) -> Self {
+    /// 自动拉起内置 `aria2c` 守护进程并启动后台 Tokio 状态同步线程
+    pub fn start(mut config: Aria2Config) -> Self {
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let snapshot = Arc::new(Mutex::new(EngineSnapshot::default()));
+
+        // 优先静默启动项目内置的 aria2c（使用专属端口 16801，避免与外部 aria2 冲突）
+        let proc_cfg = Aria2ProcessConfig {
+            binary_path: Aria2ProcessConfig::resolve_bundled_binary(),
+            rpc_port: 16801,
+            rpc_secret: config.secret.clone(),
+            ..Default::default()
+        };
+        let managed_process = match Aria2Process::spawn(proc_cfg.clone()) {
+            Ok(proc) => {
+                config.endpoint = proc_cfg.rpc_endpoint();
+                Some(proc)
+            }
+            Err(err) => {
+                if let Ok(mut s) = snapshot.lock() {
+                    s.last_error = Some(format!("拉起内置 aria2c 失败，尝试连接外部 RPC: {err}"));
+                }
+                None
+            }
+        };
+
         let snap_clone = Arc::clone(&snapshot);
 
         std::thread::spawn(move || {
@@ -83,7 +108,11 @@ impl DownloadEngine {
             });
         });
 
-        Self { cmd_tx, snapshot }
+        Self {
+            cmd_tx,
+            snapshot,
+            _managed_process: managed_process,
+        }
     }
 
     /// 发送异步控制指令（非阻塞，不卡 UI 线程）

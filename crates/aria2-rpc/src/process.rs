@@ -3,6 +3,13 @@
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// Windows 隐藏子进程控制台黑框标志
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// aria2c 进程启动配置
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Aria2ProcessConfig {
@@ -63,6 +70,27 @@ impl Aria2ProcessConfig {
     pub fn rpc_endpoint(&self) -> String {
         format!("http://127.0.0.1:{}/jsonrpc", self.rpc_port)
     }
+
+    /// 自动探测项目内置的 `aria2c` 可执行文件路径（优先 exe 同级目录，其次工作目录，最后回退系统 PATH）
+    pub fn resolve_bundled_binary() -> PathBuf {
+        let bin_name = if cfg!(windows) { "aria2c.exe" } else { "aria2c" };
+        let mut candidates = Vec::new();
+
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join("resources").join("bin").join(bin_name));
+                candidates.push(dir.join(bin_name));
+            }
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join("resources").join("bin").join(bin_name));
+        }
+
+        candidates
+            .into_iter()
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| PathBuf::from(bin_name))
+    }
 }
 
 /// 托管中的 `aria2c` 子进程句柄，Drop 时自动终止子进程防止孤儿进程残留
@@ -72,16 +100,19 @@ pub struct Aria2Process {
 }
 
 impl Aria2Process {
-    /// 按配置启动 `aria2c` 守护进程
+    /// 按配置静默启动 `aria2c` 守护进程（Windows 下自动隐藏黑框）
     pub fn spawn(config: Aria2ProcessConfig) -> std::io::Result<Self> {
         let args = config.build_args();
-        let child = Command::new(&config.binary_path)
-            .args(&args)
+        let mut cmd = Command::new(&config.binary_path);
+        cmd.args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
+            .stderr(Stdio::null());
 
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        let child = cmd.spawn()?;
         Ok(Self { child, config })
     }
 
