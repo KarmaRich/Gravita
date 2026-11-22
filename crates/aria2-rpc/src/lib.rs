@@ -1,17 +1,31 @@
-//! aria2 JSON-RPC 2.0 协议模型与客户端基础模块
+//! aria2 JSON-RPC 2.0 客户端与进程托管库
+
+pub mod client;
+pub mod process;
+pub mod types;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+pub use client::Aria2Client;
+pub use process::{Aria2Process, Aria2ProcessConfig};
+pub use types::{AddUriOptions, Aria2File, Aria2TaskStatus, Aria2Version, GlobalOptions, GlobalStat};
+
 /// aria2 RPC 通信与协议错误定义
 #[derive(Debug, Error)]
 pub enum Aria2Error {
+    #[error("HTTP 请求失败: {0}")]
+    Http(#[from] reqwest::Error),
+
     #[error("序列化或反序列化 JSON 失败: {0}")]
     Serde(#[from] serde_json::Error),
 
     #[error("aria2 返回业务错误 (code={code}): {message}")]
     Rpc { code: i64, message: String },
+
+    #[error("aria2 响应缺少 result 字段")]
+    MissingResult,
 }
 
 /// JSON-RPC 2.0 请求结构
@@ -21,6 +35,22 @@ pub struct JsonRpcRequest {
     pub id: String,
     pub method: String,
     pub params: Vec<Value>,
+}
+
+/// JSON-RPC 2.0 错误对象
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct JsonRpcErrorObject {
+    pub code: i64,
+    pub message: String,
+}
+
+/// JSON-RPC 2.0 响应结构
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct JsonRpcResponse {
+    pub jsonrpc: String,
+    pub id: Option<Value>,
+    pub result: Option<Value>,
+    pub error: Option<JsonRpcErrorObject>,
 }
 
 /// aria2 客户端连接配置
