@@ -159,6 +159,11 @@ impl DownloadEngine {
         let _ = self.cmd_tx.send(cmd);
     }
 
+    /// 克隆命令发送端（供系统托盘菜单等外部模块控制引擎）
+    pub fn command_sender(&self) -> mpsc::UnboundedSender<EngineCommand> {
+        self.cmd_tx.clone()
+    }
+
     /// 读取最新引擎快照
     pub fn snapshot(&self) -> EngineSnapshot {
         self.snapshot

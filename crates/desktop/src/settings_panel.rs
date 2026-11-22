@@ -280,3 +280,31 @@ pub fn bring_window_to_front(title: &str) {
         let _ = title;
     }
 }
+
+/// 将指定标题的桌面窗口隐藏到系统托盘
+pub fn hide_window(title: &str) {
+    #[cfg(windows)]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn FindWindowW(class_name: *const u16, window_name: *const u16) -> isize;
+            fn ShowWindow(hwnd: isize, cmd_show: i32) -> i32;
+        }
+
+        const SW_HIDE: i32 = 0;
+        let wide: Vec<u16> = OsStr::new(title).encode_wide().chain(Some(0)).collect();
+        unsafe {
+            let hwnd = FindWindowW(std::ptr::null(), wide.as_ptr());
+            if hwnd != 0 {
+                ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = title;
+    }
+}

@@ -9,4 +9,5 @@ aria2-rpc = { path = "../aria2-rpc" }
 idm-core = { path = "../core" }
 gpui-kit.workspace = true
 rfd.workspace = true
+tray-icon.workspace = true
 tokio.workspace = true

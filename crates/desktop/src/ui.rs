@@ -5,10 +5,11 @@ use crate::dialogs::{AddTaskInputs, AddTaskTab};
 use crate::engine::{DownloadEngine, EngineCommand, EngineSnapshot};
 use crate::settings_dialog::{render_add_task_dialog, render_settings_dialog};
 use crate::settings_panel::{
-    SettingsInputs, SettingsTab, bring_window_to_front, open_directory, pick_directory,
+    SettingsInputs, SettingsTab, bring_window_to_front, hide_window, open_directory, pick_directory,
 };
 use crate::state::{DesktopState, SidebarFilter, format_speed};
 use crate::system::{apply_autostart, send_system_notification};
+use crate::tray::start_system_tray;
 use crate::ui_parts::{
     IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row,
 };
@@ -52,8 +53,9 @@ impl IdmMainView {
             state.settings.bridge_port,
             state.settings.bridge_token.clone(),
         );
-        // 启动后立即将本地已保存的全局配置同步给内置 aria2c
+        // 启动后立即将本地已保存的全局配置同步给内置 aria2c，并启动系统托盘
         Self::sync_global_options(&engine, &state.settings);
+        start_system_tray(engine.command_sender());
 
         let preferred_dir = state
             .settings
@@ -382,6 +384,13 @@ impl IdmMainView {
                         this.engine.send(EngineCommand::SyncNow);
                     },
                 )),
+            )
+            .child(
+                idm_tool_button("tb-tray", "⬇", rgb(0x475569), "隐藏托盘", p).on_click(
+                    cx.listener(|_, _, _, _| {
+                        hide_window("IDM-Aria2-RS 下载器");
+                    }),
+                ),
             )
             .child(div().flex_1())
             .child(div().w(px(220.0)).pr_2().child(Input::new(&self.search_input)))

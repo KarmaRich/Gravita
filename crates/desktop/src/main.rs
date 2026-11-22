@@ -7,6 +7,7 @@ mod settings_dialog;
 mod settings_panel;
 mod state;
 mod system;
+mod tray;
 mod ui;
 mod ui_parts;
 
