@@ -1,7 +1,15 @@
-//! IDM-Aria2-RS 核心领域模型：任务状态、文件自动分类与基础配置
+//! IDM-Aria2-RS 核心领域模型、任务管理、配置持久化与本地插件桥接服务
+
+pub mod bridge;
+pub mod config;
+pub mod task;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+pub use bridge::BridgeServer;
+pub use config::AppSettings;
+pub use task::{DownloadTask, NewDownloadRequest, TaskFilter, TaskStore};
 
 /// 下载任务状态（与 IDM 视图分类对应）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,30 +76,12 @@ mod tests {
 
     #[test]
     fn test_file_category_inference() {
-        assert_eq!(
-            FileCategory::from_filename("archive.7z"),
-            FileCategory::Compressed
-        );
-        assert_eq!(
-            FileCategory::from_filename("REPORT.PDF"),
-            FileCategory::Document
-        );
-        assert_eq!(
-            FileCategory::from_filename("song.flac"),
-            FileCategory::Music
-        );
-        assert_eq!(
-            FileCategory::from_filename("installer.exe"),
-            FileCategory::Program
-        );
-        assert_eq!(
-            FileCategory::from_filename("movie.mkv"),
-            FileCategory::Video
-        );
-        assert_eq!(
-            FileCategory::from_filename("README"),
-            FileCategory::Other
-        );
+        assert_eq!(FileCategory::from_filename("archive.7z"), FileCategory::Compressed);
+        assert_eq!(FileCategory::from_filename("REPORT.PDF"), FileCategory::Document);
+        assert_eq!(FileCategory::from_filename("song.flac"), FileCategory::Music);
+        assert_eq!(FileCategory::from_filename("installer.exe"), FileCategory::Program);
+        assert_eq!(FileCategory::from_filename("movie.mkv"), FileCategory::Video);
+        assert_eq!(FileCategory::from_filename("README"), FileCategory::Other);
     }
 
     #[test]
