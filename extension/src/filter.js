@@ -56,13 +56,34 @@ export function shouldInterceptDownload(candidate, config = DEFAULT_CONFIG) {
     return false;
   }
 
-  const name = candidate.filename || parsedUrl.pathname.split("/").pop() || "";
+  const name = extractFilename(candidate, parsedUrl);
   const dotIdx = name.lastIndexOf(".");
   if (dotIdx <= 0 || dotIdx === name.length - 1) {
     return false;
   }
   const ext = name.slice(dotIdx + 1).toLowerCase();
   return (config.extensions || []).includes(ext);
+}
+
+/**
+ * 提取候选下载的真实文件名（优先浏览器解析出的 filename，其次 URL 查询参数中的 response-content-disposition，最后 URL 路径）
+ */
+export function extractFilename(candidate, parsedUrl) {
+  if (candidate.filename) {
+    return candidate.filename.split(/[\\/]/).pop() || "";
+  }
+  const rcd = parsedUrl.searchParams.get("response-content-disposition");
+  if (rcd) {
+    const match = rcd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+    if (match?.[1]) {
+      try {
+        return decodeURIComponent(match[1].trim());
+      } catch {
+        return match[1].trim();
+      }
+    }
+  }
+  return parsedUrl.pathname.split("/").pop() || "";
 }
 
 /**

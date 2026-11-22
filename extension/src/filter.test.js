@@ -40,6 +40,17 @@ test("命中排除域名或非 HTTP 协议不应被拦截", () => {
   );
 });
 
+test("GitHub Release 重定向无后缀 URL 应能通过 response-content-disposition 识别并拦截", () => {
+  assert.equal(
+    shouldInterceptDownload({
+      url: "https://objects.githubusercontent.com/github-production-release-asset/12345/abc?response-content-disposition=attachment%3B%20filename%3Daria2-1.37.0.zip",
+      filename: "",
+      fileSize: 5 * 1024 * 1024,
+    }),
+    true
+  );
+});
+
 test("请求头组装应正确包含 Referer / User-Agent / Cookie", () => {
   const headers = buildDownloadHeaders({
     referer: "https://example.com/",

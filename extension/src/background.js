@@ -56,44 +56,54 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   });
 });
 
-// 监听浏览器原生下载事件，符合规则且桌面端在线时自动接管
-chrome.downloads.onCreated.addListener(async (item) => {
+// 监听 onDeterminingFilename：此时浏览器已完成 302 重定向并解析出 Content-Disposition 真实文件名（兼容 GitHub Release / 网盘直链）
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   const url = item.finalUrl || item.url;
-  if (!url) return;
-
-  const config = await loadConfig();
-  const candidate = {
-    url,
-    filename: item.filename || "",
-    fileSize: typeof item.fileSize === "number" ? item.fileSize : -1,
-  };
-
-  if (!shouldInterceptDownload(candidate, config)) {
+  if (!url) {
+    suggest();
     return;
   }
 
-  const cookie = await getCookieHeader(url);
-  const headers = buildDownloadHeaders({
-    referer: item.referrer,
-    userAgent: navigator.userAgent,
-    cookie,
-  });
+  (async () => {
+    const config = await loadConfig();
+    const candidate = {
+      url,
+      filename: item.filename || "",
+      fileSize: typeof item.fileSize === "number" ? item.fileSize : -1,
+    };
 
-  const accepted = await dispatchToDesktop(config.desktopEndpoint, config.token, {
-    url,
-    filename: item.filename ? item.filename.split(/[\\/]/).pop() : null,
-    save_dir: null,
-    headers,
-    auto_start: true,
-  });
-
-  // 仅当桌面端确认接收后才取消浏览器原生下载，否则自动回退给浏览器
-  if (accepted) {
-    try {
-      await chrome.downloads.cancel(item.id);
-      await chrome.downloads.erase({ id: item.id });
-    } catch {
-      // 忽略已完成的取消异常
+    if (!shouldInterceptDownload(candidate, config)) {
+      suggest();
+      return;
     }
-  }
+
+    const cookie = await getCookieHeader(url);
+    const headers = buildDownloadHeaders({
+      referer: item.referrer,
+      userAgent: navigator.userAgent,
+      cookie,
+    });
+
+    const accepted = await dispatchToDesktop(config.desktopEndpoint, config.token, {
+      url,
+      filename: item.filename ? item.filename.split(/[\\/]/).pop() : null,
+      save_dir: null,
+      headers,
+      auto_start: true,
+    });
+
+    // 仅当桌面端确认接收后才取消浏览器原生下载，否则自动放行给浏览器
+    if (accepted) {
+      try {
+        await chrome.downloads.cancel(item.id);
+        await chrome.downloads.erase({ id: item.id });
+      } catch {
+        // 忽略已完成的取消异常
+      }
+    }
+    suggest();
+  })();
+
+  // 返回 true 告知 Chrome 异步调用 suggest()
+  return true;
 });
