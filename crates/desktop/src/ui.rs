@@ -1,25 +1,25 @@
 //! 仿经典 IDM (Internet Download Manager) 桌面主界面（已接入真实 aria2 后台引擎）
 
+use crate::dialogs::{AddTaskInputs, render_add_task_modal, render_settings_modal};
 use crate::engine::{DownloadEngine, EngineCommand, EngineSnapshot};
-use crate::settings_panel::{SettingsInputs, open_directory, render_settings_bar};
+use crate::settings_panel::{SettingsInputs, open_directory};
 use crate::state::{DesktopState, SidebarFilter, format_speed};
 use crate::ui_parts::{
     IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row, render_menubar,
 };
 use gpui_kit::base::StyledExt;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::*;
 use idm_core::{AppSettings, DownloadStatus, DownloadTask, FileCategory};
+use std::path::PathBuf;
 
 /// IDM 主窗口视图实体
 pub struct IdmMainView {
     state: DesktopState,
     engine: DownloadEngine,
     snapshot: EngineSnapshot,
-    show_add_bar: bool,
-    show_settings: bool,
-    url_input: Entity<InputState>,
+    show_add_modal: bool,
+    show_settings_modal: bool,
+    add_inputs: AddTaskInputs,
     settings_inputs: SettingsInputs,
     notice: Option<String>,
 }
@@ -40,7 +40,12 @@ impl IdmMainView {
             proxy: state.settings.proxy.clone(),
         });
 
-        let url_input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入 HTTP/HTTPS/磁力下载链接..."));
+        let default_dir = state
+            .settings
+            .default_download_dir
+            .to_string_lossy()
+            .into_owned();
+        let add_inputs = AddTaskInputs::new(&default_dir, window, cx);
         let settings_inputs = SettingsInputs::from_settings(&state.settings, window, cx);
 
         // 启动轻量 UI 定时刷新循环：每 500ms 同步一次后台 aria2 引擎快照
@@ -64,9 +69,9 @@ impl IdmMainView {
             state,
             engine,
             snapshot: EngineSnapshot::default(),
-            show_add_bar: false,
-            show_settings: false,
-            url_input,
+            show_add_modal: false,
+            show_settings_modal: false,
+            add_inputs,
             settings_inputs,
             notice: None,
         }
@@ -125,7 +130,8 @@ impl IdmMainView {
             .child(
                 idm_tool_button("tb-add", "＋", rgb(0x16a34a), "新建任务", p).on_click(
                     cx.listener(|this, _, _, cx| {
-                        this.show_add_bar = !this.show_add_bar;
+                        this.show_settings_modal = false;
+                        this.show_add_modal = true;
                         cx.notify();
                     }),
                 ),
@@ -184,7 +190,8 @@ impl IdmMainView {
             .child(
                 idm_tool_button("tb-opt", "⚙", rgb(0x2563eb), "选项", p).on_click(cx.listener(
                     |this, _, _, cx| {
-                        this.show_settings = !this.show_settings;
+                        this.show_add_modal = false;
+                        this.show_settings_modal = true;
                         cx.notify();
                     },
                 )),
@@ -195,44 +202,6 @@ impl IdmMainView {
                         this.engine.send(EngineCommand::SyncNow);
                     },
                 )),
-            )
-    }
-
-    /// 渲染新建下载 URL 输入条
-    fn render_add_bar(&self, p: IdmPalette, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .bg(p.menu_bg)
-            .border_b_1()
-            .border_color(p.border)
-            .child(div().text_xs().text_color(p.text).child("下载链接:"))
-            .child(div().flex_1().child(Input::new(&self.url_input)))
-            .child(
-                Button::new("btn-submit-url")
-                    .primary()
-                    .label("开始下载")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let url = this.url_input.read(cx).value().trim().to_string();
-                        if !url.is_empty() {
-                            let cat = FileCategory::from_filename(&url);
-                            let save_dir = this.state.settings.resolve_save_dir(cat);
-                            this.engine.send(EngineCommand::AddUri {
-                                url,
-                                filename: None,
-                                save_dir: Some(save_dir),
-                                split: this.state.settings.default_split,
-                            });
-                            this.url_input.update(cx, |input, cx| {
-                                input.set_value("", window, cx);
-                            });
-                            this.show_add_bar = false;
-                            cx.notify();
-                        }
-                    })),
             )
     }
 
@@ -385,20 +354,86 @@ impl Render for IdmMainView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = IdmPalette::classic();
         let mut root = div()
+            .relative()
             .flex()
             .flex_col()
             .size_full()
             .bg(p.panel_bg)
             .child(render_menubar(p))
-            .child(self.render_toolbar(p, cx));
+            .child(self.render_toolbar(p, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(self.render_category_tree(p, cx))
+                    .child(self.render_task_list(p, cx)),
+            )
+            .child(self.render_statusbar(p));
 
-        if self.show_add_bar {
-            root = root.child(self.render_add_bar(p, cx));
+        if self.show_add_modal {
+            root = root.child(render_add_task_modal(
+                &self.add_inputs,
+                p,
+                cx.listener(|this, _, _, cx| {
+                    this.show_add_modal = false;
+                    cx.notify();
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.show_add_modal = false;
+                    cx.notify();
+                }),
+                cx.listener(|this, _, window, cx| {
+                    let url = this.add_inputs.url.read(cx).value().trim().to_string();
+                    if !url.is_empty() {
+                        let custom_name =
+                            this.add_inputs.filename.read(cx).value().trim().to_string();
+                        let custom_dir =
+                            this.add_inputs.save_dir.read(cx).value().trim().to_string();
+                        let filename = if custom_name.is_empty() {
+                            None
+                        } else {
+                            Some(custom_name)
+                        };
+                        let save_dir = if custom_dir.is_empty() {
+                            let cat = FileCategory::from_filename(
+                                filename.as_deref().unwrap_or(&url),
+                            );
+                            Some(this.state.settings.resolve_save_dir(cat))
+                        } else {
+                            Some(PathBuf::from(custom_dir))
+                        };
+
+                        this.engine.send(EngineCommand::AddUri {
+                            url,
+                            filename,
+                            save_dir,
+                            split: this.state.settings.default_split,
+                        });
+                        this.add_inputs.url.update(cx, |i, cx| i.set_value("", window, cx));
+                        this.add_inputs
+                            .filename
+                            .update(cx, |i, cx| i.set_value("", window, cx));
+                        this.notice = Some("已提交新下载任务到 aria2".into());
+                        this.show_add_modal = false;
+                        cx.notify();
+                    }
+                }),
+            ));
         }
-        if self.show_settings {
-            root = root.child(render_settings_bar(
+
+        if self.show_settings_modal {
+            root = root.child(render_settings_modal(
                 &self.settings_inputs,
                 p,
+                cx.listener(|this, _, _, cx| {
+                    this.show_settings_modal = false;
+                    cx.notify();
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.show_settings_modal = false;
+                    cx.notify();
+                }),
                 cx.listener(|this, _, _, cx| {
                     this.settings_inputs.apply_to(&mut this.state.settings, cx);
                     let path = AppSettings::default_config_path();
@@ -412,20 +447,12 @@ impl Render for IdmMainView {
                         proxy: this.state.settings.proxy.clone(),
                     });
                     this.notice = Some("设置已保存并实时应用到 aria2".into());
-                    this.show_settings = false;
+                    this.show_settings_modal = false;
                     cx.notify();
                 }),
             ));
         }
 
-        root.child(
-            div()
-                .flex()
-                .flex_1()
-                .overflow_hidden()
-                .child(self.render_category_tree(p, cx))
-                .child(self.render_task_list(p, cx)),
-        )
-        .child(self.render_statusbar(p))
+        root
     }
 }
