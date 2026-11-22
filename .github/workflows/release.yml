@@ -1,0 +1,273 @@
+name: Release Gravita
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "手动触发发布的版本号 (例如 v0.1.0)"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================================================
+  # 1. Windows 构建任务：产出 NSIS 安装包 (.exe) + 绿色便携包 (.zip) + 浏览器扩展包
+  # ============================================================================
+  build-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Portable & Browser Extension via package.ps1
+        shell: pwsh
+        run: |
+          $TagName = if ("${{ github.event.inputs.tag }}") { "${{ github.event.inputs.tag }}" } else { "${{ github.ref_name }}" }
+          $Ver = $TagName.TrimStart('v')
+          .\scripts\package.ps1
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          Copy-Item "dist\Gravita-v*-win64.zip" -Destination "artifact\Gravita-$TagName-windows-x86_64-portable.zip"
+          Copy-Item "dist\Gravita-v*-win64\Gravita-Browser-Extension.zip" -Destination "artifact\Gravita-Browser-Extension-$TagName.zip"
+
+      - name: Build Windows NSIS Setup Installer (.exe)
+        shell: pwsh
+        run: |
+          $TagName = if ("${{ github.event.inputs.tag }}") { "${{ github.event.inputs.tag }}" } else { "${{ github.ref_name }}" }
+          $Ver = $TagName.TrimStart('v')
+          $StageDir = (Resolve-Path "dist\Gravita-v*-win64").Path
+          $OutSetup = (Join-Path (Resolve-Path "artifact").Path "Gravita-$TagName-windows-x86_64-setup.exe")
+          $IconPath = (Resolve-Path "resources\gravita.ico").Path
+
+          $NsiScript = @"
+          !include "MUI2.nsh"
+          Name "Gravita $Ver"
+          OutFile "$OutSetup"
+          InstallDir "`$LOCALAPPDATA\Programs\Gravita"
+          RequestExecutionLevel user
+          !define MUI_ICON "$IconPath"
+          !define MUI_UNICON "$IconPath"
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_UNPAGE_CONFIRM
+          !insertmacro MUI_UNPAGE_INSTFILES
+          !insertmacro MUI_LANGUAGE "SimpChinese"
+
+          Section "Install"
+            SetOutPath "`$INSTDIR"
+            File /r "$StageDir\*.*"
+            CreateDirectory "`$SMPROGRAMS\Gravita"
+            CreateShortcut "`$SMPROGRAMS\Gravita\Gravita.lnk" "`$INSTDIR\Gravita.exe" "" "`$INSTDIR\resources\gravita.ico"
+            CreateShortcut "`$DESKTOP\Gravita.lnk" "`$INSTDIR\Gravita.exe" "" "`$INSTDIR\resources\gravita.ico"
+            WriteUninstaller "`$INSTDIR\Uninstall.exe"
+          SectionEnd
+
+          Section "Uninstall"
+            Delete "`$DESKTOP\Gravita.lnk"
+            RMDir /r "`$SMPROGRAMS\Gravita"
+            RMDir /r "`$INSTDIR"
+          SectionEnd
+          "@
+          Set-Content -Path "installer.nsi" -Value $NsiScript -Encoding UTF8
+          makensis installer.nsi
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-windows
+          path: artifact/*
+
+  # ============================================================================
+  # 2. macOS 构建任务：产出标准 Gravita.app 应用束并压制为 .dmg 安装镜像
+  # ============================================================================
+  build-macos:
+    name: Build macOS (Apple Silicon arm64)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install aria2 via Homebrew
+        run: brew install aria2
+
+      - name: Build Gravita Release Binary
+        run: cargo build -p idm-desktop --bin Gravita --release
+
+      - name: Package Gravita.app & .dmg Installer
+        run: |
+          TAG_NAME="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${TAG_NAME#v}"
+          APP_DIR="dist/dmg/Gravita.app/Contents"
+          mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources/bin" artifact
+
+          cp target/release/Gravita "$APP_DIR/MacOS/Gravita"
+          chmod +x "$APP_DIR/MacOS/Gravita"
+          cp "$(which aria2c)" "$APP_DIR/Resources/bin/aria2c"
+          chmod +x "$APP_DIR/Resources/bin/aria2c"
+
+          # 生成 macOS .icns 高清应用图标
+          mkdir -p Gravita.iconset
+          sips -z 16 16     resources/gravita.png --out Gravita.iconset/icon_16x16.png
+          sips -z 32 32     resources/gravita.png --out Gravita.iconset/icon_16x16@2x.png
+          sips -z 32 32     resources/gravita.png --out Gravita.iconset/icon_32x32.png
+          sips -z 64 64     resources/gravita.png --out Gravita.iconset/icon_32x32@2x.png
+          sips -z 128 128   resources/gravita.png --out Gravita.iconset/icon_128x128.png
+          sips -z 256 256   resources/gravita.png --out Gravita.iconset/icon_128x128@2x.png
+          sips -z 256 256   resources/gravita.png --out Gravita.iconset/icon_256x256.png
+          iconutil -c icns Gravita.iconset -o "$APP_DIR/Resources/gravita.icns"
+
+          cat > "$APP_DIR/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>Gravita</string>
+            <key>CFBundleIconFile</key>
+            <string>gravita.icns</string>
+            <key>CFBundleIdentifier</key>
+            <string>io.github.gravita.downloader</string>
+            <key>CFBundleName</key>
+            <string>Gravita</string>
+            <key>CFBundleDisplayName</key>
+            <string>Gravita 下载器</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${VER}</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname "Gravita ${VER}" -srcfolder dist/dmg -ov -format UDZO "artifact/Gravita-${TAG_NAME}-macos-arm64.dmg"
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-macos
+          path: artifact/*
+
+  # ============================================================================
+  # 3. Linux 构建任务：产出 Debian/Ubuntu 安装包 (.deb) + 通用便携包 (.tar.gz)
+  # ============================================================================
+  build-linux:
+    name: Build Linux (x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux System Dependencies (GPUI & Tray & Aria2)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config cmake clang \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libgtk-3-dev libayatana-appindicator3-dev libxdo-dev \
+            libssl-dev libvulkan-dev aria2
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Gravita Release Binary
+        run: cargo build -p idm-desktop --bin Gravita --release
+
+      - name: Package Linux .deb Installer & .tar.gz Portable
+        run: |
+          TAG_NAME="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${TAG_NAME#v}"
+          mkdir -p artifact
+
+          # 1. 组装便携版 .tar.gz
+          PORT_DIR="dist/Gravita-${TAG_NAME}-linux-x86_64"
+          mkdir -p "$PORT_DIR/resources/bin"
+          cp target/release/Gravita "$PORT_DIR/Gravita"
+          cp "$(which aria2c)" "$PORT_DIR/resources/bin/aria2c"
+          cp resources/gravita.png "$PORT_DIR/resources/gravita.png"
+          cp README.md "$PORT_DIR/README.md"
+          tar -czf "artifact/Gravita-${TAG_NAME}-linux-x86_64.tar.gz" -C dist "Gravita-${TAG_NAME}-linux-x86_64"
+
+          # 2. 组装 Debian/Ubuntu .deb 安装包
+          DEB_DIR="dist/deb/gravita_${VER}_amd64"
+          mkdir -p "$DEB_DIR/DEBIAN" "$DEB_DIR/usr/bin" "$DEB_DIR/usr/share/applications" "$DEB_DIR/usr/share/icons/hicolor/256x256/apps"
+          cp target/release/Gravita "$DEB_DIR/usr/bin/gravita"
+          chmod 755 "$DEB_DIR/usr/bin/gravita"
+          cp resources/gravita.png "$DEB_DIR/usr/share/icons/hicolor/256x256/apps/gravita.png"
+
+          cat > "$DEB_DIR/DEBIAN/control" <<EOF
+          Package: gravita
+          Version: ${VER}
+          Section: net
+          Priority: optional
+          Architecture: amd64
+          Depends: aria2, libgtk-3-0, libayatana-appindicator3-1
+          Maintainer: Gravita Contributors
+          Description: Gravita High-Speed Multi-Thread Download Manager powered by Rust, GPUI and Aria2
+          EOF
+
+          cat > "$DEB_DIR/usr/share/applications/gravita.desktop" <<EOF
+          [Desktop Entry]
+          Name=Gravita
+          Comment=Gravita 高速多线程下载器
+          Exec=/usr/bin/gravita
+          Icon=gravita
+          Terminal=false
+          Type=Application
+          Categories=Network;FileTransfer;
+          EOF
+
+          dpkg-deb --build "$DEB_DIR" "artifact/gravita_${VER}_amd64.deb"
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-linux
+          path: artifact/*
+
+  # ============================================================================
+  # 4. 汇总三端安装包并自动创建 GitHub Release
+  # ============================================================================
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Platform Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release & Upload Installers
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: "Gravita ${{ github.event.inputs.tag || github.ref_name }}"
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: release-assets/*

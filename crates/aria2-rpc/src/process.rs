@@ -80,6 +80,10 @@ impl Aria2ProcessConfig {
             if let Some(dir) = exe.parent() {
                 candidates.push(dir.join("resources").join("bin").join(bin_name));
                 candidates.push(dir.join(bin_name));
+                // 兼容 macOS App Bundle (Gravita.app/Contents/MacOS/../Resources/bin/aria2c)
+                if let Some(contents_dir) = dir.parent() {
+                    candidates.push(contents_dir.join("Resources").join("bin").join(bin_name));
+                }
             }
         }
         if let Ok(cwd) = std::env::current_dir() {

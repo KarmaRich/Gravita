@@ -17,5 +17,5 @@ rfd.workspace = true
 tray-icon.workspace = true
 tokio.workspace = true
 
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 embed-resource = "3.0"
