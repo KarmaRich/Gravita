@@ -12,7 +12,7 @@
 ## 阶段一：核心架构与 MVP (P0)
 - [x] `aria2-rpc`：aria2c 进程托管与完整 JSON-RPC 客户端（添加/暂停/恢复/删除/状态查询）
 - [x] `core`：任务管理服务、自动文件分类、SQLite 持久化与本地 HTTP RPC 接收服务
-- [ ] `desktop`：基于 `GPUI + gpui-kit` 的主界面（工具栏、分类树、任务列表、新建下载弹窗、设置页）
+- [x] `desktop`：基于 `GPUI + gpui-kit` 的主界面（工具栏、分类树、任务列表、新建下载弹窗、设置页）
 - [ ] `extension`：浏览器下载拦截、右键菜单、过滤规则、Popup 状态面板
 
 ## 阶段二：完善 IDM 核心体验 (P1)
