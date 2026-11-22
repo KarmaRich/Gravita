@@ -1,5 +1,6 @@
 //! 仿经典 IDM (Internet Download Manager) 桌面主界面（已接入真实 aria2 后台引擎）
 
+use crate::batch_dialog::{BatchTaskInputs, preview_batch_urls, render_batch_dialog};
 use crate::dialogs::{AddTaskInputs, AddTaskTab};
 use crate::engine::{DownloadEngine, EngineCommand, EngineSnapshot};
 use crate::settings_dialog::{render_add_task_dialog, render_settings_dialog};
@@ -9,6 +10,7 @@ use crate::ui_parts::{
     IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row, render_menubar,
 };
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::*;
 use idm_core::{AppSettings, DownloadStatus, DownloadTask, FileCategory};
 use std::path::PathBuf;
@@ -19,11 +21,14 @@ pub struct IdmMainView {
     engine: DownloadEngine,
     snapshot: EngineSnapshot,
     show_add_modal: bool,
+    show_batch_modal: bool,
     show_settings_modal: bool,
     add_tab: AddTaskTab,
     settings_tab: SettingsTab,
     add_inputs: AddTaskInputs,
+    batch_inputs: BatchTaskInputs,
     settings_inputs: SettingsInputs,
+    search_input: Entity<InputState>,
     notice: Option<String>,
 }
 
@@ -52,7 +57,10 @@ impl IdmMainView {
             .into_owned();
         let add_inputs =
             AddTaskInputs::new(&preferred_dir, state.settings.allow_overwrite, window, cx);
+        let batch_inputs = BatchTaskInputs::new(&preferred_dir, window, cx);
         let settings_inputs = SettingsInputs::from_settings(&state.settings, window, cx);
+        let search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("搜索文件名或路径..."));
 
         // 启动轻量 UI 定时刷新循环：每 500ms 同步一次后台 aria2 引擎快照
         cx.spawn(async move |this, cx| {
@@ -76,11 +84,14 @@ impl IdmMainView {
             engine,
             snapshot: EngineSnapshot::default(),
             show_add_modal: false,
+            show_batch_modal: false,
             show_settings_modal: false,
             add_tab: AddTaskTab::Basic,
             settings_tab: SettingsTab::General,
             add_inputs,
+            batch_inputs,
             settings_inputs,
+            search_input,
             notice: None,
         }
     }
@@ -89,13 +100,14 @@ impl IdmMainView {
         engine.send(EngineCommand::ApplyGlobalOptions(s.to_aria2_global_options()));
     }
 
-    /// 返回当前视图应展示的任务列表（已连接 aria2 时展示真实任务，否则展示空或离线提示）
-    fn visible_tasks(&self) -> Vec<DownloadTask> {
+    /// 返回当前视图应展示的任务列表（已连接 aria2 时展示真实任务，支持左侧分类 + 顶部搜索过滤）
+    fn visible_tasks(&self, cx: &App) -> Vec<DownloadTask> {
         let source: Vec<DownloadTask> = if self.snapshot.connected {
             self.snapshot.tasks.clone()
         } else {
             Vec::new()
         };
+        let kw = self.search_input.read(cx).value().trim().to_ascii_lowercase();
 
         source
             .into_iter()
@@ -105,6 +117,11 @@ impl IdmMainView {
                 SidebarFilter::Paused => t.status == DownloadStatus::Paused,
                 SidebarFilter::Completed => t.status == DownloadStatus::Completed,
                 SidebarFilter::Category(cat) => t.category == cat,
+            })
+            .filter(|t| {
+                kw.is_empty()
+                    || t.filename.to_ascii_lowercase().contains(&kw)
+                    || t.url.to_ascii_lowercase().contains(&kw)
             })
             .collect()
     }
@@ -158,6 +175,27 @@ impl IdmMainView {
                         this.add_tab = AddTaskTab::Basic;
                         this.show_settings_modal = false;
                         this.show_add_modal = true;
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(
+                idm_tool_button("tb-batch", "▤", rgb(0x0d9488), "批量任务", p).on_click(
+                    cx.listener(|this, _, window, cx| {
+                        let preferred = this
+                            .state
+                            .settings
+                            .last_save_dir
+                            .as_ref()
+                            .unwrap_or(&this.state.settings.default_download_dir)
+                            .to_string_lossy()
+                            .into_owned();
+                        this.batch_inputs
+                            .save_dir
+                            .update(cx, |i, cx| i.set_value(preferred, window, cx));
+                        this.show_add_modal = false;
+                        this.show_settings_modal = false;
+                        this.show_batch_modal = true;
                         cx.notify();
                     }),
                 ),
@@ -229,6 +267,8 @@ impl IdmMainView {
                     },
                 )),
             )
+            .child(div().flex_1())
+            .child(div().w(px(220.0)).pr_2().child(Input::new(&self.search_input)))
     }
 
     /// 渲染左侧经典 IDM 树形分类栏
@@ -298,7 +338,7 @@ impl IdmMainView {
 
     /// 渲染右侧真实任务列表表格
     fn render_task_list(&self, p: IdmPalette, cx: &mut Context<Self>) -> impl IntoElement {
-        let tasks = self.visible_tasks();
+        let tasks = self.visible_tasks(cx);
         let selected_id = self.state.selected_task_id.clone();
 
         div()
@@ -483,6 +523,87 @@ impl Render for IdmMainView {
                             .update(cx, |i, cx| i.set_value("", window, cx));
                         this.notice = Some("已提交新下载任务到 aria2".into());
                         this.show_add_modal = false;
+                        cx.notify();
+                    }
+                }),
+            ));
+        }
+
+        if self.show_batch_modal {
+            let preview_count = preview_batch_urls(&self.batch_inputs, cx).len();
+            root = root.child(render_batch_dialog(
+                &self.batch_inputs,
+                preview_count,
+                p,
+                cx.listener(|this, _, window, cx| {
+                    let cur = this
+                        .batch_inputs
+                        .save_dir
+                        .read(cx)
+                        .value()
+                        .trim()
+                        .to_string();
+                    let init = (!cur.is_empty()).then(|| PathBuf::from(&cur));
+                    if let Some(chosen) = pick_directory(init.as_deref()) {
+                        let s = chosen.to_string_lossy().into_owned();
+                        this.batch_inputs
+                            .save_dir
+                            .update(cx, |i, cx| i.set_value(s, window, cx));
+                        cx.notify();
+                    }
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.show_batch_modal = false;
+                    cx.notify();
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.show_batch_modal = false;
+                    cx.notify();
+                }),
+                cx.listener(|this, _, window, cx| {
+                    let urls = preview_batch_urls(&this.batch_inputs, cx);
+                    if !urls.is_empty() {
+                        let custom_dir = this
+                            .batch_inputs
+                            .save_dir
+                            .read(cx)
+                            .value()
+                            .trim()
+                            .to_string();
+                        let save_dir = if custom_dir.is_empty() {
+                            this.state.settings.default_download_dir.clone()
+                        } else {
+                            PathBuf::from(custom_dir)
+                        };
+                        this.state.settings.last_save_dir = Some(save_dir.clone());
+                        let _ = this
+                            .state
+                            .settings
+                            .save_to_file(&AppSettings::default_config_path());
+
+                        let count = urls.len();
+                        for url in urls {
+                            this.engine.send(EngineCommand::AddUri {
+                                url,
+                                filename: None,
+                                save_dir: Some(save_dir.clone()),
+                                split: this.state.settings.default_split,
+                                max_connection_per_server: this
+                                    .state
+                                    .settings
+                                    .max_connection_per_server,
+                                min_split_size: this.state.settings.min_split_size.clone(),
+                                allow_overwrite: this.state.settings.allow_overwrite,
+                                max_download_limit: None,
+                                headers: vec![],
+                                proxy: None,
+                            });
+                        }
+                        this.batch_inputs
+                            .urls
+                            .update(cx, |i, cx| i.set_value("", window, cx));
+                        this.notice = Some(format!("已批量提交 {count} 条下载任务到 aria2"));
+                        this.show_batch_modal = false;
                         cx.notify();
                     }
                 }),
