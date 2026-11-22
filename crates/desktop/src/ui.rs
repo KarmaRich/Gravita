@@ -46,8 +46,6 @@ impl IdmMainView {
             state.settings.to_aria2_startup_args(),
             state.settings.bridge_port,
             state.settings.bridge_token.clone(),
-            state.settings.default_download_dir.clone(),
-            state.settings.default_split,
         );
         // 启动后立即将本地已保存的全局配置同步给内置 aria2c
         Self::sync_global_options(&engine, &state.settings);
@@ -66,14 +64,18 @@ impl IdmMainView {
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索文件名或路径..."));
 
-        // 启动轻量 UI 定时刷新循环：每 500ms 同步一次后台 aria2 引擎快照
-        cx.spawn(async move |this, cx| {
+        // 启动轻量 UI 定时刷新循环：每 500ms 同步一次后台 aria2 引擎快照，并检查插件待确认下载请求
+        cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(500))
                     .await;
-                let ok = this.update(cx, |view, cx| {
+                let ok = this.update_in(cx, |view, window, cx| {
                     view.snapshot = view.engine.snapshot();
+                    if let Some(req) = view.engine.pop_pending_request() {
+                        view.open_add_modal_with_request(req, window, cx);
+                        cx.activate(true);
+                    }
                     cx.notify();
                 });
                 if ok.is_err() {
@@ -102,6 +104,52 @@ impl IdmMainView {
 
     fn sync_global_options(engine: &DownloadEngine, s: &AppSettings) {
         engine.send(EngineCommand::ApplyGlobalOptions(s.to_aria2_global_options()));
+    }
+
+    /// 收到浏览器插件拦截请求后，预填全部字段并弹出「新建下载任务」确认窗口
+    fn open_add_modal_with_request(
+        &mut self,
+        req: idm_core::NewDownloadRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let preferred_dir = req
+            .save_dir
+            .as_ref()
+            .or(self.state.settings.last_save_dir.as_ref())
+            .unwrap_or(&self.state.settings.default_download_dir)
+            .to_string_lossy()
+            .into_owned();
+        let filename = req.filename.unwrap_or_default();
+        let referer = extract_header(&req.headers, "referer").unwrap_or_default();
+        let ua = extract_header(&req.headers, "user-agent").unwrap_or_default();
+        let cookie = extract_header(&req.headers, "cookie").unwrap_or_default();
+
+        self.add_inputs
+            .url
+            .update(cx, |i, cx| i.set_value(req.url, window, cx));
+        self.add_inputs
+            .filename
+            .update(cx, |i, cx| i.set_value(filename, window, cx));
+        self.add_inputs
+            .save_dir
+            .update(cx, |i, cx| i.set_value(preferred_dir, window, cx));
+        self.add_inputs
+            .referer
+            .update(cx, |i, cx| i.set_value(referer, window, cx));
+        self.add_inputs
+            .user_agent
+            .update(cx, |i, cx| i.set_value(ua, window, cx));
+        self.add_inputs
+            .cookie
+            .update(cx, |i, cx| i.set_value(cookie, window, cx));
+
+        self.add_inputs.allow_overwrite = self.state.settings.allow_overwrite;
+        self.add_tab = AddTaskTab::Basic;
+        self.show_batch_modal = false;
+        self.show_settings_modal = false;
+        self.show_add_modal = true;
+        self.notice = Some("已捕获浏览器下载请求，请确认目录与设置后点击「开始下载」".into());
     }
 
     /// 返回当前视图应展示的任务列表（已连接 aria2 时展示真实任务，支持左侧分类 + 顶部搜索过滤）
@@ -692,4 +740,16 @@ impl Render for IdmMainView {
 
         root
     }
+}
+
+/// 从 `Key: Value` 请求头列表中按名称（不区分大小写）提取值
+fn extract_header(headers: &[String], name: &str) -> Option<String> {
+    headers.iter().find_map(|h| {
+        let (k, v) = h.split_once(':')?;
+        if k.trim().eq_ignore_ascii_case(name) {
+            Some(v.trim().to_string())
+        } else {
+            None
+        }
+    })
 }

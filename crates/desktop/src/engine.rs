@@ -3,7 +3,8 @@
 use aria2_rpc::{
     AddUriOptions, Aria2Client, Aria2Config, Aria2Process, Aria2ProcessConfig, Aria2TaskStatus,
 };
-use idm_core::{DownloadStatus, DownloadTask, FileCategory};
+use idm_core::{DownloadStatus, DownloadTask, FileCategory, NewDownloadRequest};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -50,10 +51,12 @@ pub struct EngineSnapshot {
     pub last_error: Option<String>,
 }
 
-/// 桌面端后台下载引擎句柄（同时托管内置 `aria2c` 子进程生命周期）
+/// 桌面端后台下载引擎句柄（同时托管内置 `aria2c` 子进程生命周期与插件待确认请求队列）
 pub struct DownloadEngine {
     cmd_tx: mpsc::UnboundedSender<EngineCommand>,
     snapshot: Arc<Mutex<EngineSnapshot>>,
+    /// 来自浏览器插件的待确认下载请求队列（由 UI 弹出「新建下载任务」窗口确认）
+    pending_requests: Arc<Mutex<VecDeque<NewDownloadRequest>>>,
     /// 持有内置 aria2c 进程句柄，随引擎 Drop 时自动关闭清理
     _managed_process: Option<Aria2Process>,
 }
@@ -65,11 +68,10 @@ impl DownloadEngine {
         startup_args: Vec<String>,
         bridge_port: u16,
         bridge_token: Option<String>,
-        default_dir: PathBuf,
-        default_split: u32,
     ) -> Self {
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let snapshot = Arc::new(Mutex::new(EngineSnapshot::default()));
+        let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
 
         // 优先静默启动项目内置的 aria2c（使用专属端口 16801，避免与外部 aria2 冲突）
         let proc_cfg = Aria2ProcessConfig {
@@ -93,6 +95,7 @@ impl DownloadEngine {
         };
 
         let snap_clone = Arc::clone(&snapshot);
+        let pending_clone = Arc::clone(&pending_requests);
 
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -111,7 +114,7 @@ impl DownloadEngine {
                     }
                 };
 
-                // 启动本地 HTTP 桥接服务，供浏览器插件或外部脚本推送下载任务
+                // 启动本地 HTTP 桥接服务，收到插件拦截的下载请求后入队，交由 UI 弹窗确认
                 let (bridge_tx, mut bridge_rx) = mpsc::unbounded_channel();
                 let bind_addr = format!("127.0.0.1:{bridge_port}");
                 let _bridge = idm_core::BridgeServer::start(&bind_addr, bridge_token, bridge_tx)
@@ -129,22 +132,9 @@ impl DownloadEngine {
                             sync_snapshot(&client, &snap_clone).await;
                         }
                         Some(req) = bridge_rx.recv() => {
-                            let filename = req.inferred_filename();
-                            let save_dir = req.save_dir.unwrap_or_else(|| default_dir.clone());
-                            let cmd = EngineCommand::AddUri {
-                                url: req.url,
-                                filename: Some(filename),
-                                save_dir: Some(save_dir),
-                                split: default_split,
-                                max_connection_per_server: default_split.min(16),
-                                min_split_size: "1M".into(),
-                                allow_overwrite: false,
-                                max_download_limit: None,
-                                headers: req.headers,
-                                proxy: None,
-                            };
-                            handle_command(&client, cmd, &snap_clone).await;
-                            sync_snapshot(&client, &snap_clone).await;
+                            if let Ok(mut q) = pending_clone.lock() {
+                                q.push_back(req);
+                            }
                         }
                     }
                 }
@@ -154,8 +144,14 @@ impl DownloadEngine {
         Self {
             cmd_tx,
             snapshot,
+            pending_requests,
             _managed_process: managed_process,
         }
+    }
+
+    /// 取出一条来自浏览器插件的待确认下载请求（供 UI 弹出「新建下载任务」窗口）
+    pub fn pop_pending_request(&self) -> Option<NewDownloadRequest> {
+        self.pending_requests.lock().ok()?.pop_front()
     }
 
     /// 发送异步控制指令（非阻塞，不卡 UI 线程）
