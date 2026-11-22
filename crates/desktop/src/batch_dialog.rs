@@ -1,6 +1,6 @@
 //! 批量下载 / 通配符导入居中模态弹窗
 
-use crate::dialogs::modal_shell;
+use crate::dialogs::{checkbox_row, modal_shell};
 use crate::ui_parts::IdmPalette;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
@@ -11,6 +11,8 @@ use idm_core::batch::expand_batch_urls;
 pub struct BatchTaskInputs {
     pub urls: Entity<InputState>,
     pub save_dir: Entity<InputState>,
+    /// 批量任务是否使用代理（默认 false 不使用代理）
+    pub use_proxy: bool,
 }
 
 impl BatchTaskInputs {
@@ -27,6 +29,7 @@ impl BatchTaskInputs {
                     .placeholder("选择或输入保存目录")
                     .default_value(dir)
             }),
+            use_proxy: false,
         }
     }
 }
@@ -35,12 +38,19 @@ impl BatchTaskInputs {
 pub fn render_batch_dialog(
     inputs: &BatchTaskInputs,
     preview_count: usize,
+    configured_proxy: Option<&str>,
     p: IdmPalette,
     on_browse: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_toggle_proxy: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_submit: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    let proxy_label = match configured_proxy.filter(|s| !s.trim().is_empty()) {
+        Some(px) => format!("使用代理下载（选项预设代理: {px}）"),
+        None => "使用代理下载（请先在「选项 -> HTTP 与代理」中配置预设代理）".to_string(),
+    };
+
     let body = div()
         .flex()
         .flex_col()
@@ -61,6 +71,13 @@ pub fn render_batch_dialog(
                 .child(div().flex_1().child(Input::new(&inputs.save_dir)))
                 .child(Button::new("btn-batch-browse").label("浏览...").on_click(on_browse)),
         )
+        .child(checkbox_row(
+            "chk-batch-proxy",
+            proxy_label,
+            inputs.use_proxy,
+            p,
+            on_toggle_proxy,
+        ))
         .child(
             div()
                 .text_xs()

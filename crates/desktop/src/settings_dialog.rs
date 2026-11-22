@@ -7,15 +7,17 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::*;
 
-/// 渲染「新建下载任务」完整弹窗（支持远程探测大小/真实文件名、浏览目录、覆盖开关、限速、高级 HTTP）
+/// 渲染「新建下载任务」完整弹窗（支持远程探测大小/真实文件名、浏览目录、覆盖开关、按需启用代理、限速、高级 HTTP）
 pub fn render_add_task_dialog(
     inputs: &AddTaskInputs,
     active_tab: AddTaskTab,
+    configured_proxy: Option<&str>,
     p: IdmPalette,
     on_tab: impl Fn(AddTaskTab, &mut Window, &mut App) + Clone + 'static,
     on_probe: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_browse: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_toggle_overwrite: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_toggle_proxy: impl Fn(&ClickEvent, &mut Window, &mut App) + Clone + 'static,
     on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_submit: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -52,11 +54,16 @@ pub fn render_add_task_dialog(
         .clone()
         .unwrap_or_else(|| "点击右侧「探测信息」可自动识别服务器真实文件名、大小与多线程支持".into());
 
+    let proxy_label = match configured_proxy.filter(|s| !s.trim().is_empty()) {
+        Some(px) => format!("使用代理下载（默认使用选项预设代理: {px}，或在高级页指定其他代理）"),
+        None => "使用代理下载（可在「高级 HTTP / 代理」页填写单任务代理，或在「选项」中配置预设代理）".to_string(),
+    };
+
     let content = match active_tab {
         AddTaskTab::Basic => div()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2p5()
             .child(
                 div()
                     .flex()
@@ -90,6 +97,13 @@ pub fn render_add_task_dialog(
                 inputs.allow_overwrite,
                 p,
                 on_toggle_overwrite,
+            ))
+            .child(checkbox_row(
+                "chk-add-use-proxy",
+                proxy_label.clone(),
+                inputs.use_proxy,
+                p,
+                on_toggle_proxy.clone(),
             )),
         AddTaskTab::HttpAdvanced => div()
             .flex()
@@ -98,7 +112,14 @@ pub fn render_add_task_dialog(
             .child(form_row("Referer:", &inputs.referer, p))
             .child(form_row("User-Agent:", &inputs.user_agent, p))
             .child(form_row("Cookie:", &inputs.cookie, p))
-            .child(form_row("单任务代理:", &inputs.proxy, p)),
+            .child(checkbox_row(
+                "chk-add-use-proxy-adv",
+                proxy_label,
+                inputs.use_proxy,
+                p,
+                on_toggle_proxy,
+            ))
+            .child(form_row("使用其他代理:", &inputs.proxy, p)),
     };
 
     let body = div().flex().flex_col().gap_3().child(tabs).child(content);
@@ -196,7 +217,7 @@ pub fn render_settings_dialog(
             .flex()
             .flex_col()
             .gap_2p5()
-            .child(form_row("全局代理地址:", &inputs.proxy, p))
+            .child(form_row("预设代理地址:", &inputs.proxy, p))
             .child(form_row("代理白名单:", &inputs.no_proxy, p))
             .child(form_row("默认 UA:", &inputs.user_agent, p))
             .child(form_row("连接超时(秒):", &inputs.connect_timeout, p))

@@ -19,6 +19,8 @@ pub struct AddTaskInputs {
     pub save_dir: Entity<InputState>,
     pub speed_limit: Entity<InputState>,
     pub allow_overwrite: bool,
+    /// 当前任务是否启用代理（默认 false 即直连；勾选后优先用 `proxy` 输入框，留空则用选项中的预设代理）
+    pub use_proxy: bool,
     pub referer: Entity<InputState>,
     pub user_agent: Entity<InputState>,
     pub cookie: Entity<InputState>,
@@ -43,10 +45,11 @@ impl AddTaskInputs {
             save_dir: mk("选择或输入保存目录", default_dir, window, cx),
             speed_limit: mk("0(不限) / 2M / 500K", "", window, cx),
             allow_overwrite,
+            use_proxy: false,
             referer: mk("可选 Referer，如 https://example.com/", "", window, cx),
             user_agent: mk("可选自定义 User-Agent", "", window, cx),
             cookie: mk("可选 Cookie 请求头（用于需登录态下载）", "", window, cx),
-            proxy: mk("可选单任务代理，留空沿用全局代理", "", window, cx),
+            proxy: mk("留空则使用「选项」中的预设代理；填写则使用此独立代理", "", window, cx),
             probe_status: None,
             probe_seq: 0,
             replace_gid: None,
@@ -153,7 +156,7 @@ pub fn form_row(label: &'static str, input: &Entity<InputState>, p: IdmPalette) 
 /// 勾选开关行
 pub fn checkbox_row(
     id: &'static str,
-    label: &'static str,
+    label: impl IntoElement,
     checked: bool,
     p: IdmPalette,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,

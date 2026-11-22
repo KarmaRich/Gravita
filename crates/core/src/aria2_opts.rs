@@ -44,8 +44,8 @@ impl AppSettings {
             self.lowest_speed_limit.clone(),
         );
 
-        // 3. HTTP 与代理
-        opts.insert("all-proxy".into(), self.proxy.clone().unwrap_or_default());
+        // 3. HTTP 与代理（全局默认直连不挂代理，由新建任务按需勾选启用预设代理或独立代理）
+        opts.insert("all-proxy".into(), String::new());
         opts.insert("no-proxy".into(), self.no_proxy.clone().unwrap_or_default());
         if let Some(ua) = self.user_agent.as_deref().filter(|s| !s.is_empty()) {
             opts.insert("user-agent".into(), ua.to_string());
@@ -101,6 +101,23 @@ impl AppSettings {
 
         args
     }
+
+    /// 解析单个下载任务最终使用的代理地址：
+    /// - `use_proxy == false`（默认）：不使用任何代理（直连）
+    /// - `use_proxy == true`：优先使用任务自定义的 `custom_proxy`，若为空则使用全局设置中的预设代理 `self.proxy`
+    pub fn resolve_task_proxy(&self, use_proxy: bool, custom_proxy: Option<&str>) -> Option<String> {
+        if !use_proxy {
+            return None;
+        }
+        if let Some(custom) = custom_proxy.map(str::trim).filter(|s| !s.is_empty()) {
+            return Some(custom.to_string());
+        }
+        self.proxy
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    }
 }
 
 fn bool_str(v: bool) -> String {
@@ -120,7 +137,19 @@ mod tests {
 
         let opts = s.to_aria2_global_options();
         assert_eq!(opts.get("max-overall-download-limit").map(String::as_str), Some("5M"));
-        assert_eq!(opts.get("all-proxy").map(String::as_str), Some("http://127.0.0.1:7890"));
+        assert_eq!(opts.get("all-proxy").map(String::as_str), Some(""));
+        assert_eq!(
+            s.resolve_task_proxy(false, None),
+            None
+        );
+        assert_eq!(
+            s.resolve_task_proxy(true, None).as_deref(),
+            Some("http://127.0.0.1:7890")
+        );
+        assert_eq!(
+            s.resolve_task_proxy(true, Some("http://127.0.0.1:1080")).as_deref(),
+            Some("http://127.0.0.1:1080")
+        );
         assert_eq!(opts.get("seed-ratio").map(String::as_str), Some("0.0"));
         assert_eq!(opts.get("continue").map(String::as_str), Some("true"));
     }

@@ -172,10 +172,13 @@ pub fn render_idm_task_row(
         )
 }
 
-/// 渲染底部经典 IDM 风格选中任务详情与 32 槽动态分片位图面板
+/// 渲染底部经典 IDM 风格选中任务详情与 32 槽动态分片位图面板（支持收起/展开伸缩与关闭，原始链接支持水平滚动且绝不折行撑高面板）
 pub fn render_task_inspector(
     task: &DownloadTask,
+    collapsed: bool,
     p: IdmPalette,
+    on_toggle_collapse: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_open_file: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_reveal_dir: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_copy_url: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -199,7 +202,13 @@ pub fn render_task_inspector(
             .child(label)
     };
 
-    div()
+    let collapse_label = if collapsed {
+        "▴ 展开详情"
+    } else {
+        "▾ 收起详情"
+    };
+
+    let mut root = div()
         .flex()
         .flex_col()
         .gap_1p5()
@@ -211,7 +220,7 @@ pub fn render_task_inspector(
         .text_xs()
         .text_color(p.text)
         .child(
-            // 第一行：左侧文件名（超长自动截断），右侧固定统计信息
+            // 第一行：左侧文件名（超长单行不折行），右侧统计信息 + 展开/收起按钮 + 关闭按钮
             div()
                 .flex()
                 .items_center()
@@ -220,20 +229,33 @@ pub fn render_task_inspector(
                 .child(
                     div()
                         .flex_1()
+                        .h(px(18.0))
                         .overflow_hidden()
+                        .whitespace_nowrap()
                         .font_semibold()
                         .child(format!("任务详情: {}", task.filename)),
                 )
-                .child(div().text_color(p.muted).child(format!(
-                    "已下载 {} / {} ({pct:.1}%)  |  并发连接: {}  |  分片数: {}",
-                    format_bytes(task.completed_bytes),
-                    format_bytes(task.total_bytes),
-                    task.connections,
-                    task.num_pieces.max(1)
-                ))),
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_color(p.muted).child(format!(
+                            "已下载 {} / {} ({pct:.1}%)  |  连接: {}  |  分片: {}",
+                            format_bytes(task.completed_bytes),
+                            format_bytes(task.total_bytes),
+                            task.connections,
+                            task.num_pieces.max(1)
+                        )))
+                        .child(
+                            action_btn("insp-toggle", collapse_label, p.text)
+                                .on_click(on_toggle_collapse),
+                        )
+                        .child(action_btn("insp-close", "✕ 关闭", p.muted).on_click(on_close)),
+                ),
         )
         .child(
-            // 第二行：独立操作按钮栏（支持 flex_wrap 自动换行，绝不因文件名过长而被挤出窗口）
+            // 第二行：独立操作按钮栏
             div()
                 .flex()
                 .flex_wrap()
@@ -250,49 +272,92 @@ pub fn render_task_inspector(
                     action_btn("insp-del-file", "🗑 彻底删除(含本地文件)", rgb(0xdc2626))
                         .on_click(on_delete_with_file),
                 ),
-        )
-        .child(
-            // 第三行：32 槽动态分片进度图
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(div().w(px(64.0)).text_color(p.muted).child("分片进度:"))
-                .child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .gap_0p5()
-                        .p_0p5()
-                        .bg(p.panel_bg)
-                        .border_1()
-                        .border_color(p.border)
-                        .children(slots.into_iter().map(|done| {
-                            div()
-                                .flex_1()
-                                .h(px(10.0))
-                                .bg(if done { rgb(0x2563eb) } else { p.progress_bg })
-                        })),
-                ),
-        )
-        .child(
-            // 第四行：完整保存路径与原始链接（各自占 50% 宽度并开启 overflow_hidden 防撑破）
-            div()
-                .flex()
-                .items_center()
-                .gap_4()
-                .text_color(p.muted)
-                .child(
-                    div()
-                        .flex_1()
-                        .overflow_hidden()
-                        .child(format!("保存路径: {}", task.full_path().display())),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .overflow_hidden()
-                        .child(format!("原始链接: {}", task.url)),
-                ),
-        )
+        );
+
+    if !collapsed {
+        root = root
+            .child(
+                // 第三行：32 槽动态分片进度图
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().w(px(64.0)).text_color(p.muted).child("分片进度:"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .gap_0p5()
+                            .p_0p5()
+                            .bg(p.panel_bg)
+                            .border_1()
+                            .border_color(p.border)
+                            .children(slots.into_iter().map(|done| {
+                                div()
+                                    .flex_1()
+                                    .h(px(10.0))
+                                    .bg(if done { rgb(0x2563eb) } else { p.progress_bg })
+                            })),
+                    ),
+            )
+            .child(
+                // 第四行：保存路径与原始链接（单行固定高度 + 水平滚动框，彻底解决超长链接折行撑高面板问题）
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .text_color(p.muted)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .w(px(300.0))
+                            .child(div().child("保存路径:"))
+                            .child(
+                                div()
+                                    .id("insp-path-scroll")
+                                    .flex_1()
+                                    .h(px(22.0))
+                                    .px_1p5()
+                                    .flex()
+                                    .items_center()
+                                    .bg(p.panel_bg)
+                                    .border_1()
+                                    .border_color(p.border)
+                                    .rounded_sm()
+                                    .overflow_x_scroll()
+                                    .whitespace_nowrap()
+                                    .child(task.full_path().display().to_string()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(div().child("原始链接:"))
+                            .child(
+                                div()
+                                    .id("insp-url-scroll")
+                                    .flex_1()
+                                    .h(px(22.0))
+                                    .px_1p5()
+                                    .flex()
+                                    .items_center()
+                                    .bg(p.panel_bg)
+                                    .border_1()
+                                    .border_color(p.border)
+                                    .rounded_sm()
+                                    .overflow_x_scroll()
+                                    .whitespace_nowrap()
+                                    .child(task.url.clone()),
+                            ),
+                    ),
+            );
+    }
+
+    root
 }

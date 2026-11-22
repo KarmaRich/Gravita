@@ -182,6 +182,7 @@ impl IdmMainView {
             .update(cx, |i, cx| i.set_value(cookie, window, cx));
 
         self.add_inputs.allow_overwrite = self.state.settings.allow_overwrite;
+        self.add_inputs.use_proxy = false;
         self.add_inputs.replace_gid = None;
         self.add_inputs.probe_status = Some("正在自动探测服务器文件大小与断点续传支持...".into());
         self.add_tab = AddTaskTab::Basic;
@@ -205,11 +206,10 @@ impl IdmMainView {
         let is_replacing = self.add_inputs.replace_gid.is_some();
         let headers = self.add_inputs.build_headers(cx);
         let task_proxy = self.add_inputs.proxy.read(cx).value().trim().to_string();
-        let proxy = if !task_proxy.is_empty() {
-            Some(task_proxy)
-        } else {
-            self.state.settings.proxy.clone()
-        };
+        let proxy = self
+            .state
+            .settings
+            .resolve_task_proxy(self.add_inputs.use_proxy, Some(&task_proxy));
         self.add_inputs.probe_status = Some("正在连接服务器探测文件信息...".into());
         cx.notify();
 
@@ -378,7 +378,11 @@ impl IdmMainView {
                         this.add_inputs
                             .save_dir
                             .update(cx, |i, cx| i.set_value(default_dir, window, cx));
+                        this.add_inputs
+                            .proxy
+                            .update(cx, |i, cx| i.set_value("", window, cx));
                         this.add_inputs.allow_overwrite = this.state.settings.allow_overwrite;
+                        this.add_inputs.use_proxy = false;
                         this.add_inputs.replace_gid = None;
                         this.add_inputs.probe_status = None;
                         this.add_tab = AddTaskTab::Basic;
@@ -405,6 +409,7 @@ impl IdmMainView {
                         this.batch_inputs
                             .save_dir
                             .update(cx, |i, cx| i.set_value(preferred, window, cx));
+                        this.batch_inputs.use_proxy = false;
                         this.show_add_modal = false;
                         this.show_settings_modal = false;
                         this.show_batch_modal = true;
@@ -682,10 +687,20 @@ impl IdmMainView {
             };
             let refresh_gid = sel.id.clone();
             let del_gid = sel.id.clone();
+            let collapsed = self.state.inspector_collapsed;
 
             panel = panel.child(render_task_inspector(
                 &sel,
+                collapsed,
                 p,
+                cx.listener(|this, _, _, cx| {
+                    this.state.inspector_collapsed = !this.state.inspector_collapsed;
+                    cx.notify();
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.state.selected_task_id = None;
+                    cx.notify();
+                }),
                 cx.listener(move |this, _, _, cx| {
                     if open_path.exists() {
                         let _ = open_file(&open_path);
@@ -787,9 +802,12 @@ impl Render for IdmMainView {
 
         if self.show_add_modal {
             let entity = cx.entity().clone();
+            let entity_proxy = cx.entity().clone();
+            let configured_proxy = self.state.settings.proxy.clone();
             root = root.child(render_add_task_dialog(
                 &self.add_inputs,
                 self.add_tab,
+                configured_proxy.as_deref(),
                 p,
                 move |tab, _, cx| {
                     entity.update(cx, |this, cx| {
@@ -824,6 +842,13 @@ impl Render for IdmMainView {
                     this.add_inputs.allow_overwrite = !this.add_inputs.allow_overwrite;
                     cx.notify();
                 }),
+                move |_, window, cx| {
+                    entity_proxy.update(cx, |this, cx| {
+                        this.add_inputs.use_proxy = !this.add_inputs.use_proxy;
+                        this.trigger_url_probe(window, cx);
+                        cx.notify();
+                    });
+                },
                 cx.listener(|this, _, _, cx| {
                     this.show_add_modal = false;
                     cx.notify();
@@ -843,6 +868,10 @@ impl Render for IdmMainView {
                             this.add_inputs.speed_limit.read(cx).value().trim().to_string();
                         let task_proxy =
                             this.add_inputs.proxy.read(cx).value().trim().to_string();
+                        let resolved_proxy = this
+                            .state
+                            .settings
+                            .resolve_task_proxy(this.add_inputs.use_proxy, Some(&task_proxy));
                         let headers = this.add_inputs.build_headers(cx);
 
                         let filename = (!custom_name.is_empty()).then_some(custom_name);
@@ -875,7 +904,7 @@ impl Render for IdmMainView {
                             allow_overwrite: this.add_inputs.allow_overwrite,
                             max_download_limit: (!speed_limit.is_empty()).then_some(speed_limit),
                             headers,
-                            proxy: (!task_proxy.is_empty()).then_some(task_proxy),
+                            proxy: resolved_proxy,
                             replace_gid: this.add_inputs.replace_gid.take(),
                         });
                         this.add_inputs.url.update(cx, |i, cx| i.set_value("", window, cx));
@@ -892,9 +921,11 @@ impl Render for IdmMainView {
 
         if self.show_batch_modal {
             let preview_count = preview_batch_urls(&self.batch_inputs, cx).len();
+            let configured_proxy = self.state.settings.proxy.clone();
             root = root.child(render_batch_dialog(
                 &self.batch_inputs,
                 preview_count,
+                configured_proxy.as_deref(),
                 p,
                 cx.listener(|this, _, window, cx| {
                     let cur = this
@@ -921,6 +952,10 @@ impl Render for IdmMainView {
                         }
                     })
                     .detach();
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.batch_inputs.use_proxy = !this.batch_inputs.use_proxy;
+                    cx.notify();
                 }),
                 cx.listener(|this, _, _, cx| {
                     this.show_batch_modal = false;
@@ -954,6 +989,10 @@ impl Render for IdmMainView {
                                 .settings
                                 .save_to_file(&AppSettings::default_config_path());
                         }
+                        let batch_proxy = this
+                            .state
+                            .settings
+                            .resolve_task_proxy(this.batch_inputs.use_proxy, None);
 
                         let count = urls.len();
                         for url in urls {
@@ -984,7 +1023,7 @@ impl Render for IdmMainView {
                                 allow_overwrite: this.state.settings.allow_overwrite,
                                 max_download_limit: None,
                                 headers: vec![],
-                                proxy: None,
+                                proxy: batch_proxy.clone(),
                                 replace_gid: None,
                             });
                         }

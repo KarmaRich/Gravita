@@ -21,6 +21,8 @@ pub struct DesktopState {
     pub selected_task_id: Option<String>,
     /// 左侧「全部下载」分类子树是否展开
     pub categories_expanded: bool,
+    /// 底部「任务详情」面板是否收起为单行紧凑模式
+    pub inspector_collapsed: bool,
 }
 
 impl DesktopState {
@@ -31,6 +33,7 @@ impl DesktopState {
             active_filter: SidebarFilter::All,
             selected_task_id: None,
             categories_expanded: true,
+            inspector_collapsed: false,
         }
     }
 }
