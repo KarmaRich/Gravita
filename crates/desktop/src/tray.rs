@@ -6,31 +6,12 @@ use tokio::sync::mpsc;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-const WINDOW_TITLE: &str = "IDM-Aria2-RS 下载器";
+const WINDOW_TITLE: &str = "Gravita 下载器";
+const TRAY_ICON_RGBA: &[u8] = include_bytes!("../../../resources/tray_32x32.rgba");
 
-/// 生成 32x32 蓝色下载箭头 RGBA 托盘图标（无需外部图片文件）
+/// 加载预渲染的 32x32 Gravita 引力轨道高清抗锯齿 RGBA 托盘图标
 pub fn build_tray_rgba_icon() -> (Vec<u8>, u32, u32) {
-    let size = 32u32;
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
-    for y in 0..size {
-        for x in 0..size {
-            let idx = ((y * size + x) * 4) as usize;
-            let dx = x as i32 - 16;
-            let dy = y as i32 - 16;
-            // 蓝色圆底 + 白色向下箭头
-            if dx * dx + dy * dy <= 14 * 14 {
-                let in_shaft = (13..=18).contains(&x) && (7..=19).contains(&y);
-                let in_head = (17..=24).contains(&y)
-                    && (x as i32 - 16).abs() <= (24 - y as i32);
-                if in_shaft || in_head {
-                    rgba[idx..idx + 4].copy_from_slice(&[255, 255, 255, 255]);
-                } else {
-                    rgba[idx..idx + 4].copy_from_slice(&[37, 99, 235, 255]);
-                }
-            }
-        }
-    }
-    (rgba, size, size)
+    (TRAY_ICON_RGBA.to_vec(), 32, 32)
 }
 
 /// 在独立后台线程启动系统托盘图标与右键菜单事件循环
@@ -59,7 +40,7 @@ pub fn start_system_tray(cmd_tx: mpsc::UnboundedSender<EngineCommand>) {
 
         let Ok(_tray) = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip("IDM-Aria2-RS 下载器")
+            .with_tooltip("Gravita 下载器")
             .with_icon(icon)
             .build()
         else {

@@ -3366,6 +3366,7 @@ name = "idm-desktop"
 version = "0.1.0"
 dependencies = [
  "aria2-rpc",
+ "embed-resource",
  "gpui-kit",
  "idm-core",
  "rfd",

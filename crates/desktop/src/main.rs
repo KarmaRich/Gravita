@@ -1,4 +1,5 @@
-//! IDM-Aria2-RS 桌面客户端入口（基于 Rust + GPUI + gpui-kit）
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//! Gravita (引力下载器) 桌面客户端入口（基于 Rust + GPUI + gpui-kit）
 
 mod batch_dialog;
 mod dialogs;
@@ -22,7 +23,7 @@ fn main() {
 
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some("IDM-Aria2-RS 下载器".into()),
+                title: Some("Gravita 下载器".into()),
                 ..Default::default()
             }),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -36,13 +37,13 @@ fn main() {
         cx.open_window(options, |window, cx| {
             // 点击窗口右上角关闭按钮时默认隐藏到系统托盘，不退出程序（由托盘右键「退出」彻底结束）
             window.on_window_should_close(cx, |_, _| {
-                settings_panel::hide_window("IDM-Aria2-RS 下载器");
+                settings_panel::hide_window("Gravita 下载器");
                 false
             });
             let view = cx.new(|cx| IdmMainView::new(window, cx));
             cx.new(|cx| Root::new(view, window, cx))
         })
-        .expect("打开 IDM-Aria2-RS 主窗口失败");
+        .expect("打开 Gravita 主窗口失败");
 
         cx.activate(true);
     });

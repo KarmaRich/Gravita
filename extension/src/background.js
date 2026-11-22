@@ -28,12 +28,12 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_ID,
-      title: "使用 IDM-Aria2-RS 下载此链接",
+      title: "使用 Gravita 下载此链接",
       contexts: ["link", "image", "video", "audio"],
     });
     chrome.contextMenus.create({
       id: MENU_BATCH_ID,
-      title: "使用 IDM-Aria2-RS 下载当前选中/页面全部可下载链接",
+      title: "使用 Gravita 下载当前选中/页面全部可下载链接",
       contexts: ["page", "selection"],
     });
   });

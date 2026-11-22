@@ -77,7 +77,7 @@ function attachVideoGrabber() {
 
     const badge = document.createElement("button");
     badge.type = "button";
-    badge.textContent = "⬇ 使用 IDM-Aria2-RS 下载该视频";
+    badge.textContent = "⬇ 使用 Gravita 下载该视频";
     Object.assign(badge.style, {
       position: "fixed",
       zIndex: "2147483647",
@@ -121,9 +121,9 @@ function attachVideoGrabber() {
           referer: window.location.href,
         },
         () => {
-          badge.textContent = "✓ 已发送至 IDM-Aria2-RS";
+          badge.textContent = "✓ 已发送至 Gravita";
           setTimeout(() => {
-            badge.textContent = "⬇ 使用 IDM-Aria2-RS 下载该视频";
+            badge.textContent = "⬇ 使用 Gravita 下载该视频";
             badge.style.display = "none";
           }, 1800);
         }

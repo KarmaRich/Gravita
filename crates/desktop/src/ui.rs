@@ -88,14 +88,14 @@ impl IdmMainView {
                                     && t.status == DownloadStatus::Completed
                                 {
                                     send_system_notification(
-                                        "IDM-Aria2-RS 下载完成",
+                                        "Gravita 下载完成",
                                         format!("已完成下载: {}", t.filename),
                                     );
                                 } else if *prev != DownloadStatus::Error
                                     && t.status == DownloadStatus::Error
                                 {
                                     send_system_notification(
-                                        "IDM-Aria2-RS 下载失败",
+                                        "Gravita 下载失败",
                                         format!("下载出错: {}", t.filename),
                                     );
                                 }
@@ -109,7 +109,7 @@ impl IdmMainView {
                         view.open_add_modal_with_request(req, window, cx);
                         window.activate_window();
                         cx.activate(true);
-                        bring_window_to_front("IDM-Aria2-RS 下载器");
+                        bring_window_to_front("Gravita 下载器");
                     }
                     cx.notify();
                 });
@@ -502,7 +502,7 @@ impl IdmMainView {
             .child(
                 idm_tool_button("tb-tray", "⬇", rgb(0x475569), "隐藏托盘", p).on_click(
                     cx.listener(|_, _, _, _| {
-                        hide_window("IDM-Aria2-RS 下载器");
+                        hide_window("Gravita 下载器");
                     }),
                 ),
             )

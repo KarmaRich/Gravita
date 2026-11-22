@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 const AUTOSTART_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const AUTOSTART_VALUE_NAME: &str = "IDM-Aria2-RS";
-const WINDOW_TITLE: &str = "IDM-Aria2-RS 下载器";
+const AUTOSTART_VALUE_NAME: &str = "Gravita";
+const WINDOW_TITLE: &str = "Gravita 下载器";
 
 /// 全局通知互斥锁：防止多个下载任务同时完成时，并发线程争抢同一个 Win32 `u_id` 导致气泡被提前删除
 static NOTIFY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

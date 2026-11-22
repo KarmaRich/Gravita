@@ -1,8 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "IDM-Aria2-RS 下载助手",
+  "name": "Gravita 下载助手",
   "version": "0.1.0",
-  "description": "拦截浏览器下载并转发至 IDM-Aria2-RS 桌面客户端（支持透传 Cookie / Referer）",
+  "description": "拦截浏览器下载并转发至 Gravita 桌面客户端（支持透传 Cookie / Referer 与网页视频嗅探）",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": [
     "downloads",
     "contextMenus",
@@ -22,8 +27,13 @@
     }
   ],
   "action": {
-    "default_title": "IDM-Aria2-RS 下载助手",
-    "default_popup": "popup.html"
+    "default_title": "Gravita 下载助手",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "background": {
     "service_worker": "src/background.js",

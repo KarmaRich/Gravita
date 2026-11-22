@@ -3,6 +3,11 @@ name = "idm-desktop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+default-run = "Gravita"
+
+[[bin]]
+name = "Gravita"
+path = "src/main.rs"
 
 [dependencies]
 aria2-rpc = { path = "../aria2-rpc" }
@@ -11,3 +16,6 @@ gpui-kit.workspace = true
 rfd.workspace = true
 tray-icon.workspace = true
 tokio.workspace = true
+
+[build-dependencies]
+embed-resource = "3.0"
