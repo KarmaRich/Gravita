@@ -26,6 +26,11 @@ pub enum EngineCommand {
     PauseAll,
     /// 删除单个任务（同时清理停止记录）
     Remove(String),
+    /// 实时更新 aria2 全局参数（限速、代理等）
+    ApplyGlobalOptions {
+        max_overall_download_limit: String,
+        proxy: Option<String>,
+    },
     /// 立即触发一次状态同步
     SyncNow,
 }
@@ -161,6 +166,19 @@ async fn handle_command(
             let _ = client.remove(&gid).await;
             client
                 .remove_download_result(&gid)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+        EngineCommand::ApplyGlobalOptions {
+            max_overall_download_limit,
+            proxy,
+        } => {
+            let mut opts = aria2_rpc::GlobalOptions::new();
+            opts.insert("max-overall-download-limit".into(), max_overall_download_limit);
+            opts.insert("all-proxy".into(), proxy.unwrap_or_default());
+            client
+                .change_global_option(opts)
                 .await
                 .map(|_| ())
                 .map_err(|e| e.to_string())

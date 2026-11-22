@@ -1,6 +1,7 @@
 //! 仿经典 IDM (Internet Download Manager) 桌面主界面（已接入真实 aria2 后台引擎）
 
 use crate::engine::{DownloadEngine, EngineCommand, EngineSnapshot};
+use crate::settings_panel::{SettingsInputs, open_directory, render_settings_bar};
 use crate::state::{DesktopState, SidebarFilter, format_speed};
 use crate::ui_parts::{
     IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row, render_menubar,
@@ -9,7 +10,7 @@ use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::*;
-use idm_core::{DownloadStatus, DownloadTask, FileCategory};
+use idm_core::{AppSettings, DownloadStatus, DownloadTask, FileCategory};
 
 /// IDM 主窗口视图实体
 pub struct IdmMainView {
@@ -17,14 +18,30 @@ pub struct IdmMainView {
     engine: DownloadEngine,
     snapshot: EngineSnapshot,
     show_add_bar: bool,
+    show_settings: bool,
     url_input: Entity<InputState>,
+    settings_inputs: SettingsInputs,
+    notice: Option<String>,
 }
 
 impl IdmMainView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let state = DesktopState::with_demo_tasks();
+        let mut state = DesktopState::with_demo_tasks();
+        // 优先从本地配置文件加载持久化设置
+        let cfg_path = AppSettings::default_config_path();
+        if let Ok(loaded) = AppSettings::load_from_file(&cfg_path) {
+            state.settings = loaded;
+        }
+
         let engine = DownloadEngine::start(state.settings.aria2.clone());
+        // 启动后立即将本地已保存的限速/代理配置同步给内置 aria2c
+        engine.send(EngineCommand::ApplyGlobalOptions {
+            max_overall_download_limit: state.settings.max_overall_download_limit.clone(),
+            proxy: state.settings.proxy.clone(),
+        });
+
         let url_input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入 HTTP/HTTPS/磁力下载链接..."));
+        let settings_inputs = SettingsInputs::from_settings(&state.settings, window, cx);
 
         // 启动轻量 UI 定时刷新循环：每 500ms 同步一次后台 aria2 引擎快照
         cx.spawn(async move |this, cx| {
@@ -48,7 +65,10 @@ impl IdmMainView {
             engine,
             snapshot: EngineSnapshot::default(),
             show_add_bar: false,
+            show_settings: false,
             url_input,
+            settings_inputs,
+            notice: None,
         }
     }
 
@@ -146,7 +166,31 @@ impl IdmMainView {
             )
             .child(divider())
             .child(
-                idm_tool_button("tb-sync", "↻", rgb(0x2563eb), "刷新", p).on_click(cx.listener(
+                idm_tool_button("tb-folder", "📁", rgb(0xd97706), "打开目录", p).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        let target_dir = this
+                            .state
+                            .selected_task_id
+                            .as_deref()
+                            .and_then(|id| this.snapshot.tasks.iter().find(|t| t.id == id))
+                            .map(|t| t.save_dir.clone())
+                            .unwrap_or_else(|| this.state.settings.default_download_dir.clone());
+                        let _ = open_directory(&target_dir);
+                        this.notice = Some(format!("已打开目录: {}", target_dir.display()));
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(
+                idm_tool_button("tb-opt", "⚙", rgb(0x2563eb), "选项", p).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.show_settings = !this.show_settings;
+                        cx.notify();
+                    },
+                )),
+            )
+            .child(
+                idm_tool_button("tb-sync", "↻", rgb(0x0284c7), "刷新", p).on_click(cx.listener(
                     |this, _, _, _| {
                         this.engine.send(EngineCommand::SyncNow);
                     },
@@ -350,6 +394,28 @@ impl Render for IdmMainView {
 
         if self.show_add_bar {
             root = root.child(self.render_add_bar(p, cx));
+        }
+        if self.show_settings {
+            root = root.child(render_settings_bar(
+                &self.settings_inputs,
+                p,
+                cx.listener(|this, _, _, cx| {
+                    this.settings_inputs.apply_to(&mut this.state.settings, cx);
+                    let path = AppSettings::default_config_path();
+                    let _ = this.state.settings.save_to_file(&path);
+                    this.engine.send(EngineCommand::ApplyGlobalOptions {
+                        max_overall_download_limit: this
+                            .state
+                            .settings
+                            .max_overall_download_limit
+                            .clone(),
+                        proxy: this.state.settings.proxy.clone(),
+                    });
+                    this.notice = Some("设置已保存并实时应用到 aria2".into());
+                    this.show_settings = false;
+                    cx.notify();
+                }),
+            ));
         }
 
         root.child(

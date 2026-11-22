@@ -21,6 +21,16 @@ pub struct AppSettings {
     pub bridge_port: u16,
     /// 可选的本地接收服务鉴权 Token
     pub bridge_token: Option<String>,
+    /// 全局下载限速（如 "0" 表示不限速，"5M" 表示 5MB/s）
+    #[serde(default = "default_zero_limit")]
+    pub max_overall_download_limit: String,
+    /// 可选 HTTP/SOCKS 代理地址（如 "http://127.0.0.1:7890"）
+    #[serde(default)]
+    pub proxy: Option<String>,
+}
+
+fn default_zero_limit() -> String {
+    "0".to_string()
 }
 
 impl Default for AppSettings {
@@ -40,11 +50,21 @@ impl Default for AppSettings {
             aria2: Aria2Config::default(),
             bridge_port: 16800,
             bridge_token: None,
+            max_overall_download_limit: "0".into(),
+            proxy: None,
         }
     }
 }
 
 impl AppSettings {
+    /// 返回默认配置文件路径（优先用户主目录下 `.idm-aria2-rs/settings.json`）
+    pub fn default_config_path() -> PathBuf {
+        let base = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        base.join(".idm-aria2-rs").join("settings.json")
+    }
     /// 根据文件分类解析最终保存路径
     pub fn resolve_save_dir(&self, category: FileCategory) -> PathBuf {
         let key = format!("{category:?}");
