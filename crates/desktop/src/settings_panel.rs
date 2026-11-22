@@ -107,7 +107,7 @@ impl SettingsInputs {
             auto_start: s.auto_start,
             max_concurrent: mk(s.max_concurrent_downloads.to_string(), "1 ~ 32", window, cx),
             split: mk(s.default_split.to_string(), "1 ~ 64", window, cx),
-            max_conn_per_server: mk(s.max_connection_per_server.to_string(), "1 ~ 16", window, cx),
+            max_conn_per_server: mk(s.max_connection_per_server.to_string(), "1 ~ 64", window, cx),
             min_split_size: mk(s.min_split_size.clone(), "如 1M / 4M", window, cx),
             speed_limit: mk(s.max_overall_download_limit.clone(), "0(不限) / 5M", window, cx),
             upload_limit: mk(s.max_overall_upload_limit.clone(), "0(不限) / 1M", window, cx),
@@ -169,7 +169,7 @@ impl SettingsInputs {
 
         if let Ok(v) = val(&self.max_concurrent).parse::<u32>() { s.max_concurrent_downloads = v.clamp(1, 32); }
         if let Ok(v) = val(&self.split).parse::<u32>() { s.default_split = v.clamp(1, 64); }
-        if let Ok(v) = val(&self.max_conn_per_server).parse::<u32>() { s.max_connection_per_server = v.clamp(1, 16); }
+        if let Ok(v) = val(&self.max_conn_per_server).parse::<u32>() { s.max_connection_per_server = v.clamp(1, 64); }
         if let Some(v) = non_empty(val(&self.min_split_size)) { s.min_split_size = v; }
         s.max_overall_download_limit = non_empty(val(&self.speed_limit)).unwrap_or_else(|| "0".into());
         s.max_overall_upload_limit = non_empty(val(&self.upload_limit)).unwrap_or_else(|| "0".into());

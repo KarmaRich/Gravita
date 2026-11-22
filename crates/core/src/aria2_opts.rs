@@ -28,7 +28,7 @@ impl AppSettings {
         opts.insert("split".into(), self.default_split.to_string());
         opts.insert(
             "max-connection-per-server".into(),
-            self.max_connection_per_server.min(16).to_string(),
+            self.max_connection_per_server.min(64).to_string(),
         );
         opts.insert("min-split-size".into(), self.min_split_size.clone());
         opts.insert(

@@ -307,7 +307,7 @@ async fn handle_command(
                 dir: save_dir.map(|p| p.to_string_lossy().into_owned()),
                 out: filename.filter(|s| !s.trim().is_empty()),
                 split: Some(split.to_string()),
-                max_connection_per_server: Some(max_connection_per_server.min(16).to_string()),
+                max_connection_per_server: Some(max_connection_per_server.min(64).to_string()),
                 min_split_size: Some(min_split_size),
                 header: headers.clone(),
                 all_proxy: proxy.filter(|s| !s.trim().is_empty()),

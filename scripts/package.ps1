@@ -32,6 +32,9 @@ New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "extension\icons") 
 Write-Host "==> [3/4] 正在复制桌面主程序、内置 aria2c 引擎与浏览器扩展..." -ForegroundColor Cyan
 Copy-Item (Join-Path $RootDir "target\release\Gravita.exe") -Destination (Join-Path $OutDir "Gravita.exe")
 Copy-Item (Join-Path $RootDir "resources\bin\aria2c.exe") -Destination (Join-Path $OutDir "resources\bin\aria2c.exe")
+if (Test-Path (Join-Path $RootDir "resources\bin\ca-certificates.crt")) {
+    Copy-Item (Join-Path $RootDir "resources\bin\ca-certificates.crt") -Destination (Join-Path $OutDir "resources\bin\ca-certificates.crt")
+}
 Copy-Item (Join-Path $RootDir "resources\gravita.ico") -Destination (Join-Path $OutDir "resources\gravita.ico")
 Copy-Item (Join-Path $RootDir "README.md") -Destination (Join-Path $OutDir "README.md")
 

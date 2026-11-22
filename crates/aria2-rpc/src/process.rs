@@ -44,7 +44,7 @@ impl Default for Aria2ProcessConfig {
 }
 
 impl Aria2ProcessConfig {
-    /// 生成传给 `aria2c` 的完整命令行参数列表
+    /// 生成传给 `aria2c` 的完整命令行参数列表（支持最高 128 并发连接数的增强版 aria2c）
     pub fn build_args(&self) -> Vec<String> {
         let mut args = vec![
             "--enable-rpc=true".to_string(),
@@ -52,7 +52,7 @@ impl Aria2ProcessConfig {
             format!("--rpc-listen-port={}", self.rpc_port),
             format!("--max-concurrent-downloads={}", self.max_concurrent_downloads),
             format!("--split={}", self.split),
-            format!("--max-connection-per-server={}", self.split.min(16)),
+            format!("--max-connection-per-server={}", self.split.min(64)),
             "--continue=true".to_string(),
         ];
 
@@ -61,6 +61,13 @@ impl Aria2ProcessConfig {
         }
         if let Some(dir) = &self.download_dir {
             args.push(format!("--dir={}", dir.display()));
+        }
+        // 若 aria2c 同级目录下存在 ca-certificates.crt（OpenSSL 静态构建版所需），自动注入 --ca-certificate
+        if let Some(bin_dir) = self.binary_path.parent() {
+            let ca_path = bin_dir.join("ca-certificates.crt");
+            if ca_path.is_file() {
+                args.push(format!("--ca-certificate={}", ca_path.display()));
+            }
         }
         args.extend(self.extra_args.iter().cloned());
         args
