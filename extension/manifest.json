@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "IDM-Aria2-RS 下载助手",
   "version": "0.1.0",
-  "description": "拦截浏览器下载并转发至 IDM-Aria2-RS 桌面客户端",
+  "description": "拦截浏览器下载并转发至 IDM-Aria2-RS 桌面客户端（支持透传 Cookie / Referer）",
   "permissions": [
     "downloads",
     "contextMenus",
@@ -12,8 +12,12 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "action": {
+    "default_title": "IDM-Aria2-RS 下载助手",
+    "default_popup": "popup.html"
+  },
   "background": {
-    "service_worker": "dist/background.js",
+    "service_worker": "src/background.js",
     "type": "module"
   }
 }

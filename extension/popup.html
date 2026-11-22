@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>IDM-Aria2-RS 下载助手</title>
+  <style>
+    body { width: 320px; margin: 0; padding: 14px; font-family: "Segoe UI", sans-serif; font-size: 13px; color: #111827; background: #f8fafc; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; }
+    .title { font-weight: 600; font-size: 14px; }
+    .badge { font-size: 11px; padding: 2px 8px; border-radius: 99px; }
+    .online { background: #dcfce7; color: #15803d; }
+    .offline { background: #fee2e2; color: #b91c1c; }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 12px; color: #475569; margin-bottom: 4px; }
+    .field input[type="text"], .field input[type="number"] { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; }
+    .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    button { width: 100%; padding: 8px; border: none; border-radius: 4px; background: #2563eb; color: #fff; font-weight: 500; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    .msg { margin-top: 8px; font-size: 12px; color: #15803d; text-align: center; min-height: 16px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span class="title">IDM-Aria2-RS 助手</span>
+    <span id="status" class="badge offline">检测中...</span>
+  </div>
+
+  <div class="row">
+    <label for="enabled">启用自动下载拦截</label>
+    <input id="enabled" type="checkbox" />
+  </div>
+
+  <div class="field">
+    <label for="endpoint">桌面端接收地址</label>
+    <input id="endpoint" type="text" placeholder="http://127.0.0.1:16800" />
+  </div>
+
+  <div class="field">
+    <label for="token">鉴权 Token（可选）</label>
+    <input id="token" type="text" placeholder="留空表示不校验" />
+  </div>
+
+  <div class="field">
+    <label for="minSizeMb">最小拦截大小 (MB)</label>
+    <input id="minSizeMb" type="number" min="0" step="0.5" />
+  </div>
+
+  <div class="field">
+    <label for="extensions">拦截扩展名（逗号分隔）</label>
+    <input id="extensions" type="text" />
+  </div>
+
+  <div class="field">
+    <label for="excludedDomains">排除域名（逗号分隔）</label>
+    <input id="excludedDomains" type="text" placeholder="例如 localhost, internal.local" />
+  </div>
+
+  <button id="saveBtn">保存设置</button>
+  <div id="msg" class="msg"></div>
+
+  <script type="module" src="src/popup.js"></script>
+</body>
+</html>
