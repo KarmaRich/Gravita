@@ -39,30 +39,6 @@ impl IdmPalette {
     }
 }
 
-/// 渲染经典 IDM 顶部菜单栏（任务 / 文件 / 下载 / 查看 / 帮助）
-pub fn render_menubar(p: IdmPalette) -> impl IntoElement {
-    let menus = ["任务(T)", "文件(F)", "下载(D)", "查看(V)", "帮助(H)"];
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .px_2()
-        .py_1()
-        .bg(p.menu_bg)
-        .border_b_1()
-        .border_color(p.border)
-        .text_xs()
-        .text_color(p.text)
-        .children(menus.into_iter().map(|m| {
-            div()
-                .px_2()
-                .py_0p5()
-                .rounded_sm()
-                .cursor_pointer()
-                .child(m)
-        }))
-}
-
 /// 渲染 IDM 经典“上图标 + 下文字”工具栏按钮
 pub fn idm_tool_button(
     id: &'static str,

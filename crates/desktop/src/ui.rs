@@ -7,7 +7,7 @@ use crate::settings_dialog::{render_add_task_dialog, render_settings_dialog};
 use crate::settings_panel::{SettingsInputs, SettingsTab, open_directory, pick_directory};
 use crate::state::{DesktopState, SidebarFilter, format_speed};
 use crate::ui_parts::{
-    IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row, render_menubar,
+    IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row,
 };
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::input::{Input, InputState};
@@ -44,6 +44,10 @@ impl IdmMainView {
         let engine = DownloadEngine::start(
             state.settings.aria2.clone(),
             state.settings.to_aria2_startup_args(),
+            state.settings.bridge_port,
+            state.settings.bridge_token.clone(),
+            state.settings.default_download_dir.clone(),
+            state.settings.default_split,
         );
         // 启动后立即将本地已保存的全局配置同步给内置 aria2c
         Self::sync_global_options(&engine, &state.settings);
@@ -171,6 +175,20 @@ impl IdmMainView {
                         this.add_inputs
                             .save_dir
                             .update(cx, |i, cx| i.set_value(preferred, window, cx));
+
+                        // 自动检测系统剪贴板中的下载链接并预填
+                        if let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                            let trimmed = clip.trim();
+                            if trimmed.starts_with("http://")
+                                || trimmed.starts_with("https://")
+                                || trimmed.starts_with("magnet:?")
+                            {
+                                this.add_inputs
+                                    .url
+                                    .update(cx, |i, cx| i.set_value(trimmed.to_string(), window, cx));
+                            }
+                        }
+
                         this.add_inputs.allow_overwrite = this.state.settings.allow_overwrite;
                         this.add_tab = AddTaskTab::Basic;
                         this.show_settings_modal = false;
@@ -215,6 +233,13 @@ impl IdmMainView {
                         if let Some(gid) = this.state.selected_task_id.clone() {
                             this.engine.send(EngineCommand::Pause(gid));
                         }
+                    }),
+                ),
+            )
+            .child(
+                idm_tool_button("tb-resume-all", "⏩", rgb(0x15803d), "全部继续", p).on_click(
+                    cx.listener(|this, _, _, _| {
+                        this.engine.send(EngineCommand::UnpauseAll);
                     }),
                 ),
             )
@@ -425,7 +450,6 @@ impl Render for IdmMainView {
             .flex_col()
             .size_full()
             .bg(p.panel_bg)
-            .child(render_menubar(p))
             .child(self.render_toolbar(p, cx))
             .child(
                 div()

@@ -30,6 +30,8 @@ pub enum EngineCommand {
     Unpause(String),
     /// 暂停全部任务
     PauseAll,
+    /// 恢复全部暂停任务
+    UnpauseAll,
     /// 删除单个任务（同时清理停止记录）
     Remove(String),
     /// 实时更新 aria2 全局参数（由 AppSettings::to_aria2_global_options 生成）
@@ -57,8 +59,15 @@ pub struct DownloadEngine {
 }
 
 impl DownloadEngine {
-    /// 自动拉起内置 `aria2c` 守护进程并启动后台 Tokio 状态同步线程
-    pub fn start(mut config: Aria2Config, startup_args: Vec<String>) -> Self {
+    /// 自动拉起内置 `aria2c` 守护进程、启动本地 `BridgeServer` 并开启后台 Tokio 状态同步线程
+    pub fn start(
+        mut config: Aria2Config,
+        startup_args: Vec<String>,
+        bridge_port: u16,
+        bridge_token: Option<String>,
+        default_dir: PathBuf,
+        default_split: u32,
+    ) -> Self {
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let snapshot = Arc::new(Mutex::new(EngineSnapshot::default()));
 
@@ -102,6 +111,13 @@ impl DownloadEngine {
                     }
                 };
 
+                // 启动本地 HTTP 桥接服务，供浏览器插件或外部脚本推送下载任务
+                let (bridge_tx, mut bridge_rx) = mpsc::unbounded_channel();
+                let bind_addr = format!("127.0.0.1:{bridge_port}");
+                let _bridge = idm_core::BridgeServer::start(&bind_addr, bridge_token, bridge_tx)
+                    .await
+                    .ok();
+
                 let mut ticker = tokio::time::interval(std::time::Duration::from_millis(800));
                 loop {
                     tokio::select! {
@@ -109,6 +125,24 @@ impl DownloadEngine {
                             sync_snapshot(&client, &snap_clone).await;
                         }
                         Some(cmd) = cmd_rx.recv() => {
+                            handle_command(&client, cmd, &snap_clone).await;
+                            sync_snapshot(&client, &snap_clone).await;
+                        }
+                        Some(req) = bridge_rx.recv() => {
+                            let filename = req.inferred_filename();
+                            let save_dir = req.save_dir.unwrap_or_else(|| default_dir.clone());
+                            let cmd = EngineCommand::AddUri {
+                                url: req.url,
+                                filename: Some(filename),
+                                save_dir: Some(save_dir),
+                                split: default_split,
+                                max_connection_per_server: default_split.min(16),
+                                min_split_size: "1M".into(),
+                                allow_overwrite: false,
+                                max_download_limit: None,
+                                headers: req.headers,
+                                proxy: None,
+                            };
                             handle_command(&client, cmd, &snap_clone).await;
                             sync_snapshot(&client, &snap_clone).await;
                         }
@@ -176,6 +210,11 @@ async fn handle_command(
         EngineCommand::Pause(gid) => client.pause(&gid).await.map(|_| ()).map_err(|e| e.to_string()),
         EngineCommand::Unpause(gid) => client.unpause(&gid).await.map(|_| ()).map_err(|e| e.to_string()),
         EngineCommand::PauseAll => client.pause_all().await.map(|_| ()).map_err(|e| e.to_string()),
+        EngineCommand::UnpauseAll => client
+            .unpause_all()
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
         EngineCommand::Remove(gid) => {
             let _ = client.remove(&gid).await;
             client
