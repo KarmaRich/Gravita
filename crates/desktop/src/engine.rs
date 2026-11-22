@@ -32,16 +32,8 @@ pub enum EngineCommand {
     PauseAll,
     /// 删除单个任务（同时清理停止记录）
     Remove(String),
-    /// 实时更新 aria2 全局参数（限速、并发、代理、重试等）
-    ApplyGlobalOptions {
-        max_concurrent_downloads: u32,
-        max_overall_download_limit: String,
-        max_overall_upload_limit: String,
-        proxy: Option<String>,
-        user_agent: Option<String>,
-        timeout_secs: u32,
-        max_tries: u32,
-    },
+    /// 实时更新 aria2 全局参数（由 AppSettings::to_aria2_global_options 生成）
+    ApplyGlobalOptions(aria2_rpc::GlobalOptions),
     /// 立即触发一次状态同步
     SyncNow,
 }
@@ -66,7 +58,7 @@ pub struct DownloadEngine {
 
 impl DownloadEngine {
     /// 自动拉起内置 `aria2c` 守护进程并启动后台 Tokio 状态同步线程
-    pub fn start(mut config: Aria2Config) -> Self {
+    pub fn start(mut config: Aria2Config, startup_args: Vec<String>) -> Self {
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let snapshot = Arc::new(Mutex::new(EngineSnapshot::default()));
 
@@ -75,6 +67,7 @@ impl DownloadEngine {
             binary_path: Aria2ProcessConfig::resolve_bundled_binary(),
             rpc_port: 16801,
             rpc_secret: config.secret.clone(),
+            extra_args: startup_args,
             ..Default::default()
         };
         let managed_process = match Aria2Process::spawn(proc_cfg.clone()) {
@@ -191,34 +184,11 @@ async fn handle_command(
                 .map(|_| ())
                 .map_err(|e| e.to_string())
         }
-        EngineCommand::ApplyGlobalOptions {
-            max_concurrent_downloads,
-            max_overall_download_limit,
-            max_overall_upload_limit,
-            proxy,
-            user_agent,
-            timeout_secs,
-            max_tries,
-        } => {
-            let mut opts = aria2_rpc::GlobalOptions::new();
-            opts.insert(
-                "max-concurrent-downloads".into(),
-                max_concurrent_downloads.to_string(),
-            );
-            opts.insert("max-overall-download-limit".into(), max_overall_download_limit);
-            opts.insert("max-overall-upload-limit".into(), max_overall_upload_limit);
-            opts.insert("all-proxy".into(), proxy.unwrap_or_default());
-            if let Some(ua) = user_agent.filter(|s| !s.trim().is_empty()) {
-                opts.insert("user-agent".into(), ua);
-            }
-            opts.insert("timeout".into(), timeout_secs.to_string());
-            opts.insert("max-tries".into(), max_tries.to_string());
-            client
-                .change_global_option(opts)
-                .await
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        }
+        EngineCommand::ApplyGlobalOptions(opts) => client
+            .change_global_option(opts)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
         EngineCommand::SyncNow => Ok(()),
     };
 

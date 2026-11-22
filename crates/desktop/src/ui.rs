@@ -36,7 +36,10 @@ impl IdmMainView {
             state.settings = loaded;
         }
 
-        let engine = DownloadEngine::start(state.settings.aria2.clone());
+        let engine = DownloadEngine::start(
+            state.settings.aria2.clone(),
+            state.settings.to_aria2_startup_args(),
+        );
         // 启动后立即将本地已保存的全局配置同步给内置 aria2c
         Self::sync_global_options(&engine, &state.settings);
 
@@ -83,15 +86,7 @@ impl IdmMainView {
     }
 
     fn sync_global_options(engine: &DownloadEngine, s: &AppSettings) {
-        engine.send(EngineCommand::ApplyGlobalOptions {
-            max_concurrent_downloads: s.max_concurrent_downloads,
-            max_overall_download_limit: s.max_overall_download_limit.clone(),
-            max_overall_upload_limit: s.max_overall_upload_limit.clone(),
-            proxy: s.proxy.clone(),
-            user_agent: s.user_agent.clone(),
-            timeout_secs: s.timeout_secs,
-            max_tries: s.max_tries,
-        });
+        engine.send(EngineCommand::ApplyGlobalOptions(s.to_aria2_global_options()));
     }
 
     /// 返回当前视图应展示的任务列表（已连接 aria2 时展示真实任务，否则展示空或离线提示）
@@ -495,13 +490,14 @@ impl Render for IdmMainView {
         }
 
         if self.show_settings_modal {
-            let entity = cx.entity().clone();
+            let entity_tab = cx.entity().clone();
+            let entity_flag = cx.entity().clone();
             root = root.child(render_settings_dialog(
                 &self.settings_inputs,
                 self.settings_tab,
                 p,
                 move |tab, _, cx| {
-                    entity.update(cx, |this, cx| {
+                    entity_tab.update(cx, |this, cx| {
                         this.settings_tab = tab;
                         cx.notify();
                     });
@@ -523,10 +519,12 @@ impl Render for IdmMainView {
                         cx.notify();
                     }
                 }),
-                cx.listener(|this, _, _, cx| {
-                    this.settings_inputs.allow_overwrite = !this.settings_inputs.allow_overwrite;
-                    cx.notify();
-                }),
+                move |flag, _, cx| {
+                    entity_flag.update(cx, |this, cx| {
+                        this.settings_inputs.toggle_flag(flag);
+                        cx.notify();
+                    });
+                },
                 cx.listener(|this, _, _, cx| {
                     this.show_settings_modal = false;
                     cx.notify();

@@ -1,7 +1,7 @@
 //! 弹窗内容组装：「新建任务」双 Tab 弹窗与「选项设置」4 分类 Tab 弹窗
 
 use crate::dialogs::{AddTaskInputs, AddTaskTab, checkbox_row, form_row, modal_shell};
-use crate::settings_panel::{SettingsInputs, SettingsTab};
+use crate::settings_panel::{SettingsFlag, SettingsInputs, SettingsTab};
 use crate::ui_parts::IdmPalette;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
@@ -96,21 +96,27 @@ pub fn render_add_task_dialog(
     modal_shell("新建下载任务", 560.0, p, on_close, body, footer)
 }
 
-/// 渲染「选项设置」4 分类标签页弹窗
+/// 渲染「选项设置」5 分类标签页弹窗（严格对齐 ARIA2_OPTIONS.md）
 pub fn render_settings_dialog(
     inputs: &SettingsInputs,
     active_tab: SettingsTab,
     p: IdmPalette,
     on_tab: impl Fn(SettingsTab, &mut Window, &mut App) + Clone + 'static,
     on_browse_dir: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    on_toggle_overwrite: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_toggle_flag: impl Fn(SettingsFlag, &mut Window, &mut App) + Clone + 'static,
     on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_save: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    let chk = |id: &'static str, label: &'static str, checked: bool, flag: SettingsFlag| {
+        let on_toggle = on_toggle_flag.clone();
+        checkbox_row(id, label, checked, p, move |_, w, cx| on_toggle(flag, w, cx))
+    };
+
     let tabs = div()
         .flex()
-        .gap_2()
+        .flex_wrap()
+        .gap_1p5()
         .pb_2()
         .border_b_1()
         .border_color(p.border)
@@ -119,7 +125,7 @@ pub fn render_settings_dialog(
             let active = active_tab == tab;
             div()
                 .id(("opt-tab", i))
-                .px_3()
+                .px_2p5()
                 .py_1()
                 .rounded_sm()
                 .cursor_pointer()
@@ -136,7 +142,7 @@ pub fn render_settings_dialog(
         SettingsTab::General => div()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2p5()
             .child(
                 div()
                     .flex()
@@ -146,38 +152,62 @@ pub fn render_settings_dialog(
                     .child(div().flex_1().child(Input::new(&inputs.download_dir)))
                     .child(Button::new("btn-opt-browse").label("浏览...").on_click(on_browse_dir)),
             )
-            .child(form_row("最大同时下载:", &inputs.max_concurrent, p))
-            .child(checkbox_row(
-                "chk-opt-overwrite",
-                "默认允许覆盖已存在的同名文件",
-                inputs.allow_overwrite,
-                p,
-                on_toggle_overwrite,
-            )),
+            .child(form_row("文件预分配*:", &inputs.file_allocation, p))
+            .child(form_row("磁盘缓存*:", &inputs.disk_cache, p))
+            .child(chk("f-cont", "启用断点续传 (continue)", inputs.continue_download, SettingsFlag::ContinueDownload))
+            .child(chk("f-over", "允许覆盖已存在同名文件 (allow-overwrite)", inputs.allow_overwrite, SettingsFlag::AllowOverwrite))
+            .child(chk("f-ren", "同名文件自动重命名 (auto-file-renaming)", inputs.auto_file_renaming, SettingsFlag::AutoFileRenaming))
+            .child(chk("f-rtime", "保留服务器修改时间 (remote-time)", inputs.remote_time, SettingsFlag::RemoteTime)),
         SettingsTab::Connection => div()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2p5()
+            .child(form_row("最大同时下载:", &inputs.max_concurrent, p))
             .child(form_row("单任务分片数:", &inputs.split, p))
             .child(form_row("单服最大连接:", &inputs.max_conn_per_server, p))
             .child(form_row("最小分片大小:", &inputs.min_split_size, p))
             .child(form_row("全局下载限速:", &inputs.speed_limit, p))
-            .child(form_row("全局上传限速:", &inputs.upload_limit, p)),
-        SettingsTab::Network => div()
+            .child(form_row("全局上传限速:", &inputs.upload_limit, p))
+            .child(form_row("最低速度断连:", &inputs.lowest_speed_limit, p)),
+        SettingsTab::HttpProxy => div()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2p5()
             .child(form_row("全局代理地址:", &inputs.proxy, p))
+            .child(form_row("代理白名单:", &inputs.no_proxy, p))
             .child(form_row("默认 UA:", &inputs.user_agent, p))
-            .child(form_row("连接超时(秒):", &inputs.timeout_secs, p))
-            .child(form_row("最大重试次数:", &inputs.max_tries, p)),
-        SettingsTab::Engine => div()
+            .child(form_row("连接超时(秒):", &inputs.connect_timeout, p))
+            .child(form_row("读写超时(秒):", &inputs.timeout_secs, p))
+            .child(form_row("最大重试次数:", &inputs.max_tries, p))
+            .child(form_row("重试间隔(秒):", &inputs.retry_wait, p))
+            .child(chk("f-cert", "校验 HTTPS 证书* (check-certificate)", inputs.check_certificate, SettingsFlag::CheckCertificate))
+            .child(chk("f-gzip", "启用 HTTP Gzip 压缩 (http-accept-gzip)", inputs.http_accept_gzip, SettingsFlag::HttpAcceptGzip)),
+        SettingsTab::BitTorrent => div()
             .flex()
             .flex_col()
-            .gap_3()
-            .child(form_row("RPC Secret:", &inputs.rpc_secret, p))
-            .child(form_row("磁盘缓存大小:", &inputs.disk_cache, p))
-            .child(form_row("文件预分配:", &inputs.file_allocation, p)),
+            .gap_2p5()
+            .child(form_row("最大连接节点:", &inputs.bt_max_peers, p))
+            .child(form_row("分享率上限:", &inputs.seed_ratio, p))
+            .child(form_row("做种时间(分):", &inputs.seed_time, p))
+            .child(form_row("附加 Tracker:", &inputs.bt_tracker, p))
+            .child(chk("f-dht", "启用 IPv4 DHT 网络* (enable-dht)", inputs.enable_dht, SettingsFlag::EnableDht))
+            .child(chk("f-pex", "启用 PEX 节点交换* (enable-peer-exchange)", inputs.enable_peer_exchange, SettingsFlag::EnablePeerExchange))
+            .child(chk("f-meta", "保存磁力 .torrent 元数据 (bt-save-metadata)", inputs.bt_save_metadata, SettingsFlag::BtSaveMetadata)),
+        SettingsTab::EngineSession => div()
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(form_row("RPC Secret*:", &inputs.rpc_secret, p))
+            .child(form_row("会话保存间隔*:", &inputs.save_session_interval, p))
+            .child(chk("f-sess", "启用会话持久化*（自动保存/恢复未完成任务）", inputs.enable_session_persistence, SettingsFlag::EnableSessionPersistence))
+            .child(chk("f-ipv6", "禁用 IPv6* (disable-ipv6)", inputs.disable_ipv6, SettingsFlag::DisableIpv6))
+            .child(
+                div()
+                    .pt_1()
+                    .text_xs()
+                    .text_color(p.muted)
+                    .child("注：带 * 号的配置项将在下次重启应用 / 引擎时生效，其余项立即热更新生效。"),
+            ),
     };
 
     let body = div().flex().flex_col().gap_3().child(tabs).child(content);
@@ -193,5 +223,5 @@ pub fn render_settings_dialog(
                 .on_click(on_save),
         );
 
-    modal_shell("选项设置", 560.0, p, on_close, body, footer)
+    modal_shell("选项设置", 600.0, p, on_close, body, footer)
 }

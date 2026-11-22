@@ -19,9 +19,18 @@ pub struct AppSettings {
     /// 最大同时下载任务数
     #[serde(default = "default_concurrent")]
     pub max_concurrent_downloads: u32,
+    /// 默认是否启用断点续传
+    #[serde(default = "default_true")]
+    pub continue_download: bool,
     /// 默认是否允许覆盖已存在文件
     #[serde(default)]
     pub allow_overwrite: bool,
+    /// 同名文件自动重命名
+    #[serde(default = "default_true")]
+    pub auto_file_renaming: bool,
+    /// 保留服务器文件修改时间
+    #[serde(default)]
+    pub remote_time: bool,
     /// 单任务默认分片数
     pub default_split: u32,
     /// 单服务器最大连接数
@@ -30,6 +39,9 @@ pub struct AppSettings {
     /// 最小分片大小（如 "1M"）
     #[serde(default = "default_min_split")]
     pub min_split_size: String,
+    /// 最低速度阈值（低于此速度自动重连，0 禁用）
+    #[serde(default = "default_zero_limit")]
+    pub lowest_speed_limit: String,
     /// aria2 RPC 连接配置
     pub aria2: Aria2Config,
     /// 供浏览器插件连接的本地 HTTP 接收服务端口
@@ -45,21 +57,79 @@ pub struct AppSettings {
     /// 可选 HTTP/SOCKS 代理地址（如 "http://127.0.0.1:7890"）
     #[serde(default)]
     pub proxy: Option<String>,
+    /// 不走代理的域名白名单（逗号分隔）
+    #[serde(default)]
+    pub no_proxy: Option<String>,
     /// 默认 User-Agent
     #[serde(default)]
     pub user_agent: Option<String>,
-    /// 网络超时（秒）
+    /// 建立连接超时（秒）
+    #[serde(default = "default_timeout")]
+    pub connect_timeout_secs: u32,
+    /// 数据读写超时（秒）
     #[serde(default = "default_timeout")]
     pub timeout_secs: u32,
     /// 最大重试次数（0 表示无限重试）
     #[serde(default = "default_max_tries")]
     pub max_tries: u32,
-    /// 磁盘缓存大小（如 "16M"）
+    /// 重试等待间隔（秒）
+    #[serde(default = "default_retry_wait")]
+    pub retry_wait_secs: u32,
+    /// 校验 HTTPS 证书（需重启引擎）
+    #[serde(default = "default_true")]
+    pub check_certificate: bool,
+    /// 允许 HTTP Gzip 压缩
+    #[serde(default)]
+    pub http_accept_gzip: bool,
+    /// 启用 BT DHT 网络（需重启引擎）
+    #[serde(default = "default_true")]
+    pub enable_dht: bool,
+    /// 启用 BT PEX 节点交换（需重启引擎）
+    #[serde(default = "default_true")]
+    pub enable_peer_exchange: bool,
+    /// 单个 BT 任务最大连接节点数
+    #[serde(default = "default_bt_peers")]
+    pub bt_max_peers: u32,
+    /// BT 做种分享率上限（0.0 不做种）
+    #[serde(default = "default_seed_ratio")]
+    pub seed_ratio: String,
+    /// BT 做种时间（分钟，0 为下载完即停）
+    #[serde(default = "default_zero_limit")]
+    pub seed_time: String,
+    /// 保存磁力链 .torrent 元数据
+    #[serde(default)]
+    pub bt_save_metadata: bool,
+    /// 附加 BT Tracker 列表（逗号分隔）
+    #[serde(default)]
+    pub bt_tracker: Option<String>,
+    /// 磁盘缓存大小（如 "16M"，需重启引擎）
     #[serde(default = "default_disk_cache")]
     pub disk_cache: String,
-    /// 文件预分配方式（none / prealloc / falloc）
+    /// 文件预分配方式（none / prealloc / falloc，需重启引擎）
     #[serde(default = "default_file_alloc")]
     pub file_allocation: String,
+    /// 启用会话持久化（自动保存/恢复未完成任务，需重启引擎）
+    #[serde(default = "default_true")]
+    pub enable_session_persistence: bool,
+    /// 自动保存会话间隔（秒）
+    #[serde(default = "default_timeout")]
+    pub save_session_interval_secs: u32,
+    /// 禁用 IPv6（需重启引擎）
+    #[serde(default)]
+    pub disable_ipv6: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_retry_wait() -> u32 {
+    3
+}
+fn default_bt_peers() -> u32 {
+    55
+}
+fn default_seed_ratio() -> String {
+    "1.0".to_string()
 }
 
 fn default_zero_limit() -> String {
@@ -102,21 +172,40 @@ impl Default for AppSettings {
             last_save_dir: None,
             category_subdirs,
             max_concurrent_downloads: 5,
+            continue_download: true,
             allow_overwrite: false,
+            auto_file_renaming: true,
+            remote_time: false,
             default_split: 16,
             max_connection_per_server: 16,
             min_split_size: "1M".into(),
+            lowest_speed_limit: "0".into(),
             aria2: Aria2Config::default(),
             bridge_port: 16800,
             bridge_token: None,
             max_overall_download_limit: "0".into(),
             max_overall_upload_limit: "0".into(),
             proxy: None,
+            no_proxy: None,
             user_agent: None,
+            connect_timeout_secs: 60,
             timeout_secs: 60,
             max_tries: 5,
+            retry_wait_secs: 3,
+            check_certificate: true,
+            http_accept_gzip: false,
+            enable_dht: true,
+            enable_peer_exchange: true,
+            bt_max_peers: 55,
+            seed_ratio: "1.0".into(),
+            seed_time: "0".into(),
+            bt_save_metadata: false,
+            bt_tracker: None,
             disk_cache: "16M".into(),
             file_allocation: "none".into(),
+            enable_session_persistence: true,
+            save_session_interval_secs: 60,
+            disable_ipv6: false,
         }
     }
 }
@@ -129,6 +218,14 @@ impl AppSettings {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
         base.join(".idm-aria2-rs").join("settings.json")
+    }
+
+    /// 返回默认 aria2 会话文件路径（`~/.idm-aria2-rs/aria2.session`）
+    pub fn default_session_path() -> PathBuf {
+        Self::default_config_path()
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("aria2.session")
     }
     /// 根据文件分类解析最终保存路径
     pub fn resolve_save_dir(&self, category: FileCategory) -> PathBuf {

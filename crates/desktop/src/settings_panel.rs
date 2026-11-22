@@ -1,172 +1,195 @@
-//! 桌面端选项设置输入状态与系统目录选择/打开辅助模块
+//! 桌面端 5 分类选项设置输入状态与系统目录选择/打开辅助模块
 
 use gpui_kit::component::input::InputState;
 use gpui_kit::*;
 use idm_core::AppSettings;
 use std::path::{Path, PathBuf};
 
-/// 选项弹窗分类标签页
+/// 选项弹窗 5 大分类标签页（严格对齐 ARIA2_OPTIONS.md）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
     General,
     Connection,
-    Network,
-    Engine,
+    HttpProxy,
+    BitTorrent,
+    EngineSession,
 }
 
 impl SettingsTab {
-    pub fn all() -> [(Self, &'static str); 4] {
+    pub fn all() -> [(Self, &'static str); 5] {
         [
             (Self::General, "常规与保存"),
             (Self::Connection, "连接与限速"),
-            (Self::Network, "代理与网络"),
-            (Self::Engine, "aria2 引擎"),
+            (Self::HttpProxy, "HTTP 与代理"),
+            (Self::BitTorrent, "BT 与磁力"),
+            (Self::EngineSession, "引擎与会话"),
         ]
     }
 }
 
+/// 选项弹窗布尔开关枚举（用于统一点击切换）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsFlag {
+    ContinueDownload,
+    AllowOverwrite,
+    AutoFileRenaming,
+    RemoteTime,
+    CheckCertificate,
+    HttpAcceptGzip,
+    EnableDht,
+    EnablePeerExchange,
+    BtSaveMetadata,
+    EnableSessionPersistence,
+    DisableIpv6,
+}
+
 /// 选项弹窗全量输入状态集合
 pub struct SettingsInputs {
+    // 1. 常规与保存
     pub download_dir: Entity<InputState>,
-    pub max_concurrent: Entity<InputState>,
+    pub file_allocation: Entity<InputState>,
+    pub disk_cache: Entity<InputState>,
+    pub continue_download: bool,
     pub allow_overwrite: bool,
+    pub auto_file_renaming: bool,
+    pub remote_time: bool,
+    // 2. 连接与限速
+    pub max_concurrent: Entity<InputState>,
     pub split: Entity<InputState>,
     pub max_conn_per_server: Entity<InputState>,
     pub min_split_size: Entity<InputState>,
     pub speed_limit: Entity<InputState>,
     pub upload_limit: Entity<InputState>,
+    pub lowest_speed_limit: Entity<InputState>,
+    // 3. HTTP 与代理
     pub proxy: Entity<InputState>,
+    pub no_proxy: Entity<InputState>,
     pub user_agent: Entity<InputState>,
+    pub connect_timeout: Entity<InputState>,
     pub timeout_secs: Entity<InputState>,
     pub max_tries: Entity<InputState>,
+    pub retry_wait: Entity<InputState>,
+    pub check_certificate: bool,
+    pub http_accept_gzip: bool,
+    // 4. BT 与磁力
+    pub bt_max_peers: Entity<InputState>,
+    pub seed_ratio: Entity<InputState>,
+    pub seed_time: Entity<InputState>,
+    pub bt_tracker: Entity<InputState>,
+    pub enable_dht: bool,
+    pub enable_peer_exchange: bool,
+    pub bt_save_metadata: bool,
+    // 5. 引擎与会话
     pub rpc_secret: Entity<InputState>,
-    pub disk_cache: Entity<InputState>,
-    pub file_allocation: Entity<InputState>,
+    pub save_session_interval: Entity<InputState>,
+    pub enable_session_persistence: bool,
+    pub disable_ipv6: bool,
 }
 
 impl SettingsInputs {
-    /// 根据当前配置初始化各输入框
-    pub fn from_settings(settings: &AppSettings, window: &mut Window, cx: &mut App) -> Self {
+    pub fn from_settings(s: &AppSettings, window: &mut Window, cx: &mut App) -> Self {
         let mk = |val: String, ph: &'static str, window: &mut Window, cx: &mut App| {
             cx.new(|cx| InputState::new(window, cx).placeholder(ph).default_value(val))
         };
-
         Self {
-            download_dir: mk(
-                settings.default_download_dir.to_string_lossy().into_owned(),
-                "默认下载保存目录",
-                window,
-                cx,
-            ),
-            max_concurrent: mk(
-                settings.max_concurrent_downloads.to_string(),
-                "1 ~ 16",
-                window,
-                cx,
-            ),
-            allow_overwrite: settings.allow_overwrite,
-            split: mk(settings.default_split.to_string(), "1 ~ 64", window, cx),
-            max_conn_per_server: mk(
-                settings.max_connection_per_server.to_string(),
-                "1 ~ 16",
-                window,
-                cx,
-            ),
-            min_split_size: mk(settings.min_split_size.clone(), "如 1M / 4M", window, cx),
-            speed_limit: mk(
-                settings.max_overall_download_limit.clone(),
-                "0(不限) / 5M / 500K",
-                window,
-                cx,
-            ),
-            upload_limit: mk(
-                settings.max_overall_upload_limit.clone(),
-                "0(不限) / 1M",
-                window,
-                cx,
-            ),
-            proxy: mk(
-                settings.proxy.clone().unwrap_or_default(),
-                "如 http://127.0.0.1:7890（留空直连）",
-                window,
-                cx,
-            ),
-            user_agent: mk(
-                settings.user_agent.clone().unwrap_or_default(),
-                "留空使用默认 User-Agent",
-                window,
-                cx,
-            ),
-            timeout_secs: mk(settings.timeout_secs.to_string(), "秒，默认 60", window, cx),
-            max_tries: mk(settings.max_tries.to_string(), "0 表示无限重试", window, cx),
-            rpc_secret: mk(
-                settings.aria2.secret.clone().unwrap_or_default(),
-                "可选 RPC 鉴权密钥",
-                window,
-                cx,
-            ),
-            disk_cache: mk(settings.disk_cache.clone(), "如 16M / 32M", window, cx),
-            file_allocation: mk(
-                settings.file_allocation.clone(),
-                "none / prealloc / falloc",
-                window,
-                cx,
-            ),
+            download_dir: mk(s.default_download_dir.to_string_lossy().into_owned(), "默认下载目录", window, cx),
+            file_allocation: mk(s.file_allocation.clone(), "none / prealloc / falloc", window, cx),
+            disk_cache: mk(s.disk_cache.clone(), "如 16M / 32M", window, cx),
+            continue_download: s.continue_download,
+            allow_overwrite: s.allow_overwrite,
+            auto_file_renaming: s.auto_file_renaming,
+            remote_time: s.remote_time,
+            max_concurrent: mk(s.max_concurrent_downloads.to_string(), "1 ~ 32", window, cx),
+            split: mk(s.default_split.to_string(), "1 ~ 64", window, cx),
+            max_conn_per_server: mk(s.max_connection_per_server.to_string(), "1 ~ 16", window, cx),
+            min_split_size: mk(s.min_split_size.clone(), "如 1M / 4M", window, cx),
+            speed_limit: mk(s.max_overall_download_limit.clone(), "0(不限) / 5M", window, cx),
+            upload_limit: mk(s.max_overall_upload_limit.clone(), "0(不限) / 1M", window, cx),
+            lowest_speed_limit: mk(s.lowest_speed_limit.clone(), "0(禁用) / 50K", window, cx),
+            proxy: mk(s.proxy.clone().unwrap_or_default(), "如 http://127.0.0.1:7890", window, cx),
+            no_proxy: mk(s.no_proxy.clone().unwrap_or_default(), "逗号分隔域名白名单", window, cx),
+            user_agent: mk(s.user_agent.clone().unwrap_or_default(), "留空使用默认 UA", window, cx),
+            connect_timeout: mk(s.connect_timeout_secs.to_string(), "秒，默认 60", window, cx),
+            timeout_secs: mk(s.timeout_secs.to_string(), "秒，默认 60", window, cx),
+            max_tries: mk(s.max_tries.to_string(), "0 表示无限重试", window, cx),
+            retry_wait: mk(s.retry_wait_secs.to_string(), "秒，默认 3", window, cx),
+            check_certificate: s.check_certificate,
+            http_accept_gzip: s.http_accept_gzip,
+            bt_max_peers: mk(s.bt_max_peers.to_string(), "默认 55", window, cx),
+            seed_ratio: mk(s.seed_ratio.clone(), "0.0 表示不做种", window, cx),
+            seed_time: mk(s.seed_time.clone(), "分钟，0 表示下完即停", window, cx),
+            bt_tracker: mk(s.bt_tracker.clone().unwrap_or_default(), "逗号分隔 Tracker URL", window, cx),
+            enable_dht: s.enable_dht,
+            enable_peer_exchange: s.enable_peer_exchange,
+            bt_save_metadata: s.bt_save_metadata,
+            rpc_secret: mk(s.aria2.secret.clone().unwrap_or_default(), "可选 RPC Secret", window, cx),
+            save_session_interval: mk(s.save_session_interval_secs.to_string(), "秒，默认 60", window, cx),
+            enable_session_persistence: s.enable_session_persistence,
+            disable_ipv6: s.disable_ipv6,
         }
     }
 
-    /// 读取用户输入并更新到 `AppSettings`
-    pub fn apply_to(&self, settings: &mut AppSettings, cx: &App) {
+    pub fn toggle_flag(&mut self, flag: SettingsFlag) {
+        match flag {
+            SettingsFlag::ContinueDownload => self.continue_download = !self.continue_download,
+            SettingsFlag::AllowOverwrite => self.allow_overwrite = !self.allow_overwrite,
+            SettingsFlag::AutoFileRenaming => self.auto_file_renaming = !self.auto_file_renaming,
+            SettingsFlag::RemoteTime => self.remote_time = !self.remote_time,
+            SettingsFlag::CheckCertificate => self.check_certificate = !self.check_certificate,
+            SettingsFlag::HttpAcceptGzip => self.http_accept_gzip = !self.http_accept_gzip,
+            SettingsFlag::EnableDht => self.enable_dht = !self.enable_dht,
+            SettingsFlag::EnablePeerExchange => self.enable_peer_exchange = !self.enable_peer_exchange,
+            SettingsFlag::BtSaveMetadata => self.bt_save_metadata = !self.bt_save_metadata,
+            SettingsFlag::EnableSessionPersistence => self.enable_session_persistence = !self.enable_session_persistence,
+            SettingsFlag::DisableIpv6 => self.disable_ipv6 = !self.disable_ipv6,
+        }
+    }
+
+    pub fn apply_to(&self, s: &mut AppSettings, cx: &App) {
         let val = |e: &Entity<InputState>| e.read(cx).value().trim().to_string();
+        let non_empty = |v: String| (!v.is_empty()).then_some(v);
 
-        let dir = val(&self.download_dir);
-        if !dir.is_empty() {
-            settings.default_download_dir = PathBuf::from(dir);
-        }
-        if let Ok(v) = val(&self.max_concurrent).parse::<u32>() {
-            settings.max_concurrent_downloads = v.clamp(1, 32);
-        }
-        settings.allow_overwrite = self.allow_overwrite;
-        if let Ok(v) = val(&self.split).parse::<u32>() {
-            settings.default_split = v.clamp(1, 64);
-        }
-        if let Ok(v) = val(&self.max_conn_per_server).parse::<u32>() {
-            settings.max_connection_per_server = v.clamp(1, 16);
-        }
-        let min_split = val(&self.min_split_size);
-        if !min_split.is_empty() {
-            settings.min_split_size = min_split;
-        }
-        let dl = val(&self.speed_limit);
-        settings.max_overall_download_limit = if dl.is_empty() { "0".into() } else { dl };
-        let ul = val(&self.upload_limit);
-        settings.max_overall_upload_limit = if ul.is_empty() { "0".into() } else { ul };
+        if let Some(d) = non_empty(val(&self.download_dir)) { s.default_download_dir = PathBuf::from(d); }
+        if let Some(a) = non_empty(val(&self.file_allocation)) { s.file_allocation = a; }
+        if let Some(c) = non_empty(val(&self.disk_cache)) { s.disk_cache = c; }
+        s.continue_download = self.continue_download;
+        s.allow_overwrite = self.allow_overwrite;
+        s.auto_file_renaming = self.auto_file_renaming;
+        s.remote_time = self.remote_time;
 
-        let proxy = val(&self.proxy);
-        settings.proxy = if proxy.is_empty() { None } else { Some(proxy) };
-        let ua = val(&self.user_agent);
-        settings.user_agent = if ua.is_empty() { None } else { Some(ua) };
+        if let Ok(v) = val(&self.max_concurrent).parse::<u32>() { s.max_concurrent_downloads = v.clamp(1, 32); }
+        if let Ok(v) = val(&self.split).parse::<u32>() { s.default_split = v.clamp(1, 64); }
+        if let Ok(v) = val(&self.max_conn_per_server).parse::<u32>() { s.max_connection_per_server = v.clamp(1, 16); }
+        if let Some(v) = non_empty(val(&self.min_split_size)) { s.min_split_size = v; }
+        s.max_overall_download_limit = non_empty(val(&self.speed_limit)).unwrap_or_else(|| "0".into());
+        s.max_overall_upload_limit = non_empty(val(&self.upload_limit)).unwrap_or_else(|| "0".into());
+        s.lowest_speed_limit = non_empty(val(&self.lowest_speed_limit)).unwrap_or_else(|| "0".into());
 
-        if let Ok(v) = val(&self.timeout_secs).parse::<u32>() {
-            settings.timeout_secs = v.clamp(5, 600);
-        }
-        if let Ok(v) = val(&self.max_tries).parse::<u32>() {
-            settings.max_tries = v;
-        }
-        let secret = val(&self.rpc_secret);
-        settings.aria2.secret = if secret.is_empty() { None } else { Some(secret) };
-        let cache = val(&self.disk_cache);
-        if !cache.is_empty() {
-            settings.disk_cache = cache;
-        }
-        let alloc = val(&self.file_allocation);
-        if !alloc.is_empty() {
-            settings.file_allocation = alloc;
-        }
+        s.proxy = non_empty(val(&self.proxy));
+        s.no_proxy = non_empty(val(&self.no_proxy));
+        s.user_agent = non_empty(val(&self.user_agent));
+        if let Ok(v) = val(&self.connect_timeout).parse::<u32>() { s.connect_timeout_secs = v.clamp(5, 600); }
+        if let Ok(v) = val(&self.timeout_secs).parse::<u32>() { s.timeout_secs = v.clamp(5, 600); }
+        if let Ok(v) = val(&self.max_tries).parse::<u32>() { s.max_tries = v; }
+        if let Ok(v) = val(&self.retry_wait).parse::<u32>() { s.retry_wait_secs = v; }
+        s.check_certificate = self.check_certificate;
+        s.http_accept_gzip = self.http_accept_gzip;
+
+        if let Ok(v) = val(&self.bt_max_peers).parse::<u32>() { s.bt_max_peers = v; }
+        if let Some(v) = non_empty(val(&self.seed_ratio)) { s.seed_ratio = v; }
+        s.seed_time = non_empty(val(&self.seed_time)).unwrap_or_else(|| "0".into());
+        s.bt_tracker = non_empty(val(&self.bt_tracker));
+        s.enable_dht = self.enable_dht;
+        s.enable_peer_exchange = self.enable_peer_exchange;
+        s.bt_save_metadata = self.bt_save_metadata;
+
+        s.aria2.secret = non_empty(val(&self.rpc_secret));
+        if let Ok(v) = val(&self.save_session_interval).parse::<u32>() { s.save_session_interval_secs = v.clamp(10, 3600); }
+        s.enable_session_persistence = self.enable_session_persistence;
+        s.disable_ipv6 = self.disable_ipv6;
     }
 }
 
-/// 弹出系统原生目录选择对话框
 pub fn pick_directory(initial: Option<&Path>) -> Option<PathBuf> {
     let mut dialog = rfd::FileDialog::new();
     if let Some(dir) = initial.filter(|p| p.is_dir()) {
@@ -175,19 +198,12 @@ pub fn pick_directory(initial: Option<&Path>) -> Option<PathBuf> {
     dialog.pick_folder()
 }
 
-/// 在系统文件管理器中打开指定目录（Windows 使用 `explorer`）
 pub fn open_directory(path: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
-    {
-        std::process::Command::new("explorer").arg(path).spawn()?;
-    }
+    { std::process::Command::new("explorer").arg(path).spawn()?; }
     #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open").arg(path).spawn()?;
-    }
+    { std::process::Command::new("open").arg(path).spawn()?; }
     #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        std::process::Command::new("xdg-open").arg(path).spawn()?;
-    }
+    { std::process::Command::new("xdg-open").arg(path).spawn()?; }
     Ok(())
 }
