@@ -115,8 +115,27 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install aria2 via Homebrew
-        run: brew install aria2
+      - name: Install OpenSSL Enhanced aria2c & Bundle Independent dylibs
+        run: |
+          brew install openssl@3 libssh2 c-ares sqlite zlib expat dylibbundler
+          curl -L -s -o aria2-1.37.0.tar.xz https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.xz
+          tar -xf aria2-1.37.0.tar.xz
+          cd aria2-1.37.0
+          # 解除原版单服务器最大 16 连接限制（提升至 128）并解除最小 1M 分片下限
+          sed -i '' 's/"1", "16"/"1", "128"/g' src/OptionHandlerFactory.cc
+          sed -i '' 's/1_m, 1024_m/64_k, 1024_m/g' src/OptionHandlerFactory.cc
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          ./configure \
+            --without-appletls \
+            --with-openssl \
+            --without-gnutls \
+            --without-libxml2 \
+            --with-expat \
+            OPENSSL_CFLAGS="-I${OPENSSL_PREFIX}/include" \
+            OPENSSL_LIBS="-L${OPENSSL_PREFIX}/lib -lssl -lcrypto" \
+            CXXFLAGS="-O2"
+          make -j$(sysctl -n hw.ncpu)
+          strip src/aria2c
 
       - name: Build Gravita Release Binary
         run: cargo build -p idm-desktop --bin Gravita --release
@@ -130,8 +149,11 @@ jobs:
 
           cp target/release/Gravita "$APP_DIR/MacOS/Gravita"
           chmod +x "$APP_DIR/MacOS/Gravita"
-          cp "$(which aria2c)" "$APP_DIR/Resources/bin/aria2c"
+          cp aria2-1.37.0/src/aria2c "$APP_DIR/Resources/bin/aria2c"
+          cp resources/bin/ca-certificates.crt "$APP_DIR/Resources/bin/ca-certificates.crt"
           chmod +x "$APP_DIR/Resources/bin/aria2c"
+          # 自动将 aria2c 依赖的 Homebrew 动态库内聚重写进 App Bundle，确保在任何裸机 Mac 上开箱即用
+          dylibbundler -od -b -x "$APP_DIR/Resources/bin/aria2c" -d "$APP_DIR/Resources/lib/" -p "@executable_path/../lib/"
 
           # 生成 macOS .icns 高清应用图标
           mkdir -p Gravita.iconset
@@ -188,15 +210,21 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Linux System Dependencies (GPUI & Tray & Aria2)
+      - name: Install Linux System Dependencies (GPUI & Tray)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential pkg-config cmake clang \
+            build-essential pkg-config cmake clang curl \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libgtk-3-dev libayatana-appindicator3-dev libxdo-dev \
-            libssl-dev libvulkan-dev aria2
+            libssl-dev libvulkan-dev
+
+      - name: Download OpenSSL Static Enhanced aria2c (128 Connections Unlocked)
+        run: |
+          curl -L -s -o aria2c-linux-openssl.tar.gz "https://github.com/Elypha/aria2-mod/releases/download/aria2c-1.37.0-b519ce0-20250812/aria2c-linux-amd64-openssl.tar.gz"
+          tar -xzf aria2c-linux-openssl.tar.gz
+          chmod +x aria2c
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -213,20 +241,24 @@ jobs:
           VER="${TAG_NAME#v}"
           mkdir -p artifact
 
-          # 1. 组装便携版 .tar.gz
+          # 1. 组装便携版 .tar.gz（内嵌 OpenSSL 静态增强版 aria2c 与 CA 根证书束）
           PORT_DIR="dist/Gravita-${TAG_NAME}-linux-x86_64"
           mkdir -p "$PORT_DIR/resources/bin"
           cp target/release/Gravita "$PORT_DIR/Gravita"
-          cp "$(which aria2c)" "$PORT_DIR/resources/bin/aria2c"
+          cp aria2c "$PORT_DIR/resources/bin/aria2c"
+          cp resources/bin/ca-certificates.crt "$PORT_DIR/resources/bin/ca-certificates.crt"
           cp resources/gravita.png "$PORT_DIR/resources/gravita.png"
           cp README.md "$PORT_DIR/README.md"
           tar -czf "artifact/Gravita-${TAG_NAME}-linux-x86_64.tar.gz" -C dist "Gravita-${TAG_NAME}-linux-x86_64"
 
-          # 2. 组装 Debian/Ubuntu .deb 安装包
+          # 2. 组装 Debian/Ubuntu .deb 安装包（内置独立增强版 aria2c，不再依赖系统 apt 的 16 线程旧版 aria2）
           DEB_DIR="dist/deb/gravita_${VER}_amd64"
-          mkdir -p "$DEB_DIR/DEBIAN" "$DEB_DIR/usr/bin" "$DEB_DIR/usr/share/applications" "$DEB_DIR/usr/share/icons/hicolor/256x256/apps"
+          mkdir -p "$DEB_DIR/DEBIAN" "$DEB_DIR/usr/bin" "$DEB_DIR/usr/lib/gravita/resources/bin" "$DEB_DIR/usr/share/applications" "$DEB_DIR/usr/share/icons/hicolor/256x256/apps"
           cp target/release/Gravita "$DEB_DIR/usr/bin/gravita"
           chmod 755 "$DEB_DIR/usr/bin/gravita"
+          cp aria2c "$DEB_DIR/usr/lib/gravita/resources/bin/aria2c"
+          chmod 755 "$DEB_DIR/usr/lib/gravita/resources/bin/aria2c"
+          cp resources/bin/ca-certificates.crt "$DEB_DIR/usr/lib/gravita/resources/bin/ca-certificates.crt"
           cp resources/gravita.png "$DEB_DIR/usr/share/icons/hicolor/256x256/apps/gravita.png"
 
           cat > "$DEB_DIR/DEBIAN/control" <<EOF
@@ -235,9 +267,9 @@ jobs:
           Section: net
           Priority: optional
           Architecture: amd64
-          Depends: aria2, libgtk-3-0, libayatana-appindicator3-1
+          Depends: libgtk-3-0, libayatana-appindicator3-1
           Maintainer: Gravita Contributors
-          Description: Gravita High-Speed Multi-Thread Download Manager powered by Rust, GPUI and Aria2
+          Description: Gravita High-Speed Multi-Thread Download Manager powered by Rust, GPUI and Enhanced OpenSSL Aria2
           EOF
 
           cat > "$DEB_DIR/usr/share/applications/gravita.desktop" <<EOF

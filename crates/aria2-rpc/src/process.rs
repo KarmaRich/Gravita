@@ -90,6 +90,15 @@ impl Aria2ProcessConfig {
                 // 兼容 macOS App Bundle (Gravita.app/Contents/MacOS/../Resources/bin/aria2c)
                 if let Some(contents_dir) = dir.parent() {
                     candidates.push(contents_dir.join("Resources").join("bin").join(bin_name));
+                    // 兼容 Linux .deb 安装目录 (/usr/bin/../lib/gravita/resources/bin/aria2c)
+                    candidates.push(
+                        contents_dir
+                            .join("lib")
+                            .join("gravita")
+                            .join("resources")
+                            .join("bin")
+                            .join(bin_name),
+                    );
                 }
             }
         }
