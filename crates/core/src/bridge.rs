@@ -49,22 +49,83 @@ impl BridgeServer {
     }
 }
 
+/// 完整读取 HTTP 请求头与 Content-Length 指定的请求体（处理 TCP 拆包/半包，限制最大 1MB 防止 OOM）
+async fn read_full_http_request(stream: &mut TcpStream) -> std::io::Result<Option<(String, String)>> {
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
+    const MAX_BODY_BYTES: usize = 1024 * 1024;
+
+    let mut buf = Vec::with_capacity(8192);
+    let mut temp = [0u8; 4096];
+    let header_end;
+
+    loop {
+        let n = stream.read(&mut temp).await?;
+        if n == 0 {
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "HTTP header 尚未读取完整即断开",
+            ));
+        }
+        buf.extend_from_slice(&temp[..n]);
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            header_end = pos;
+            break;
+        }
+        if buf.len() > MAX_HEADER_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "HTTP header 超过 64KB 限制",
+            ));
+        }
+    }
+
+    let head = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+    let content_length = head
+        .lines()
+        .find_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            if k.trim().eq_ignore_ascii_case("content-length") {
+                v.trim().parse::<usize>().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    if content_length > MAX_BODY_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "HTTP body 超过 1MB 限制",
+        ));
+    }
+
+    let body_start = header_end + 4;
+    let total_needed = body_start + content_length;
+    while buf.len() < total_needed {
+        let n = stream.read(&mut temp).await?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&temp[..n]);
+    }
+
+    let body_end = total_needed.min(buf.len());
+    let body = String::from_utf8_lossy(&buf[body_start..body_end]).into_owned();
+    Ok(Some((head, body)))
+}
+
 /// 处理单个本地 HTTP 请求
 async fn handle_connection(
     mut stream: TcpStream,
     expected_token: Option<&str>,
     tx: mpsc::UnboundedSender<NewDownloadRequest>,
 ) -> std::io::Result<()> {
-    let mut buf = vec![0u8; 32 * 1024];
-    let n = stream.read(&mut buf).await?;
-    if n == 0 {
+    let Some((head, body)) = read_full_http_request(&mut stream).await? else {
         return Ok(());
-    }
-
-    let raw = String::from_utf8_lossy(&buf[..n]);
-    let mut parts = raw.splitn(2, "\r\n\r\n");
-    let head = parts.next().unwrap_or("");
-    let body = parts.next().unwrap_or("");
+    };
 
     let mut lines = head.lines();
     let request_line = lines.next().unwrap_or("");
@@ -108,7 +169,7 @@ async fn handle_connection(
                 }
             }
 
-            match serde_json::from_str::<NewDownloadRequest>(body) {
+            match serde_json::from_str::<NewDownloadRequest>(&body) {
                 Ok(req) => {
                     let _ = tx.send(req);
                     write_json_response(&mut stream, "202 Accepted", r#"{"accepted":true}"#).await

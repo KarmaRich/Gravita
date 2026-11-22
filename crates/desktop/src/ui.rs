@@ -5,18 +5,20 @@ use crate::dialogs::{AddTaskInputs, AddTaskTab};
 use crate::engine::{DownloadEngine, EngineCommand, EngineSnapshot};
 use crate::settings_dialog::{render_add_task_dialog, render_settings_dialog};
 use crate::settings_panel::{
-    SettingsInputs, SettingsTab, bring_window_to_front, hide_window, open_directory, pick_directory,
+    SettingsInputs, SettingsTab, bring_window_to_front, hide_window, open_directory, open_file,
+    pick_directory, reveal_file_in_directory,
 };
-use crate::state::{DesktopState, SidebarFilter, format_speed};
+use crate::state::{DesktopState, SidebarFilter, format_bytes, format_speed};
 use crate::system::{apply_autostart, send_system_notification};
 use crate::tray::start_system_tray;
 use crate::ui_parts::{
     IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row,
+    render_task_inspector,
 };
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::*;
-use idm_core::{AppSettings, DownloadStatus, DownloadTask, FileCategory};
+use idm_core::{AppSettings, DownloadStatus, DownloadTask, FileCategory, probe_download_url};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -40,7 +42,7 @@ pub struct IdmMainView {
 
 impl IdmMainView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut state = DesktopState::with_demo_tasks();
+        let mut state = DesktopState::new();
         // 优先从本地配置文件加载持久化设置
         let cfg_path = AppSettings::default_config_path();
         if let Ok(loaded) = AppSettings::load_from_file(&cfg_path) {
@@ -147,14 +149,15 @@ impl IdmMainView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let filename = req.inferred_filename();
+        let cat = FileCategory::from_filename(&filename);
+        let auto_cat_dir = self.state.settings.resolve_save_dir(cat);
         let preferred_dir = req
             .save_dir
             .as_ref()
-            .or(self.state.settings.last_save_dir.as_ref())
-            .unwrap_or(&self.state.settings.default_download_dir)
+            .unwrap_or(&auto_cat_dir)
             .to_string_lossy()
             .into_owned();
-        let filename = req.inferred_filename();
         let referer = extract_header(&req.headers, "referer").unwrap_or_default();
         let ua = extract_header(&req.headers, "user-agent").unwrap_or_default();
         let cookie = extract_header(&req.headers, "cookie").unwrap_or_default();
@@ -179,20 +182,106 @@ impl IdmMainView {
             .update(cx, |i, cx| i.set_value(cookie, window, cx));
 
         self.add_inputs.allow_overwrite = self.state.settings.allow_overwrite;
+        self.add_inputs.replace_gid = None;
+        self.add_inputs.probe_status = Some("正在自动探测服务器文件大小与断点续传支持...".into());
         self.add_tab = AddTaskTab::Basic;
         self.show_batch_modal = false;
         self.show_settings_modal = false;
         self.show_add_modal = true;
         self.notice = Some("已捕获浏览器下载请求，请确认目录与设置后点击「开始下载」".into());
+        self.trigger_url_probe(window, cx);
     }
 
-    /// 返回当前视图应展示的任务列表（已连接 aria2 时展示真实任务，支持左侧分类 + 顶部搜索过滤）
-    fn visible_tasks(&self, cx: &App) -> Vec<DownloadTask> {
-        let source: Vec<DownloadTask> = if self.snapshot.connected {
-            self.snapshot.tasks.clone()
+    /// 异步发 Range 请求探测当前输入 URL 的真实文件名、文件大小与断点续传能力（带序号防竞态覆盖）
+    fn trigger_url_probe(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let url = self.add_inputs.url.read(cx).value().trim().to_string();
+        if url.is_empty() {
+            self.add_inputs.probe_status = Some("请先输入有效的下载链接".into());
+            cx.notify();
+            return;
+        }
+        self.add_inputs.probe_seq += 1;
+        let current_seq = self.add_inputs.probe_seq;
+        let is_replacing = self.add_inputs.replace_gid.is_some();
+        let headers = self.add_inputs.build_headers(cx);
+        let task_proxy = self.add_inputs.proxy.read(cx).value().trim().to_string();
+        let proxy = if !task_proxy.is_empty() {
+            Some(task_proxy)
         } else {
-            Vec::new()
+            self.state.settings.proxy.clone()
         };
+        self.add_inputs.probe_status = Some("正在连接服务器探测文件信息...".into());
+        cx.notify();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let res = cx
+                .background_executor()
+                .spawn(async move {
+                    static PROBE_RT: std::sync::OnceLock<tokio::runtime::Runtime> =
+                        std::sync::OnceLock::new();
+                    let rt = PROBE_RT.get_or_init(|| {
+                        tokio::runtime::Builder::new_multi_thread()
+                            .worker_threads(1)
+                            .enable_all()
+                            .build()
+                            .expect("初始化探测运行时失败")
+                    });
+                    rt.block_on(probe_download_url(&url, &headers, proxy.as_deref()))
+                })
+                .await;
+
+            let _ = this.update_in(cx, |view, window, cx| {
+                // 若已有更新的探测请求发出，丢弃过期响应
+                if view.add_inputs.probe_seq != current_seq {
+                    return;
+                }
+                match res {
+                    Ok(info) => {
+                        let size_str = info
+                            .total_bytes
+                            .map(format_bytes)
+                            .unwrap_or_else(|| "未知大小".into());
+                        let resume_str = if info.resumable {
+                            "支持多线程分片/续传"
+                        } else {
+                            "单线程流式下载"
+                        };
+                        view.add_inputs.probe_status = Some(format!(
+                            "大小: {size_str}  |  分类: {}  |  {resume_str}",
+                            info.category.display_name()
+                        ));
+                        if !is_replacing {
+                            let cur_name =
+                                view.add_inputs.filename.read(cx).value().trim().to_string();
+                            if cur_name.is_empty() || cur_name == "download.bin" {
+                                view.add_inputs.filename.update(cx, |i, cx| {
+                                    i.set_value(info.filename.clone(), window, cx)
+                                });
+                            }
+                            let auto_dir = view
+                                .state
+                                .settings
+                                .resolve_save_dir(info.category)
+                                .to_string_lossy()
+                                .into_owned();
+                            view.add_inputs
+                                .save_dir
+                                .update(cx, |i, cx| i.set_value(auto_dir, window, cx));
+                        }
+                    }
+                    Err(err) => {
+                        view.add_inputs.probe_status = Some(err);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 返回当前视图应展示的任务列表（无论 aria2 是否在线均可展示已落盘的历史任务）
+    fn visible_tasks(&self, cx: &App) -> Vec<DownloadTask> {
+        let source: Vec<DownloadTask> = self.snapshot.tasks.clone();
         let kw = self.search_input.read(cx).value().trim().to_ascii_lowercase();
 
         source
@@ -200,8 +289,10 @@ impl IdmMainView {
             .filter(|t| match self.state.active_filter {
                 SidebarFilter::All => true,
                 SidebarFilter::Active => t.status == DownloadStatus::Active,
+                SidebarFilter::Waiting => t.status == DownloadStatus::Waiting,
                 SidebarFilter::Paused => t.status == DownloadStatus::Paused,
                 SidebarFilter::Completed => t.status == DownloadStatus::Completed,
+                SidebarFilter::Error => t.status == DownloadStatus::Error,
                 SidebarFilter::Category(cat) => t.category == cat,
             })
             .filter(|t| {
@@ -214,17 +305,16 @@ impl IdmMainView {
 
     /// 统计某个分类下的真实任务数
     fn count_for(&self, filter: SidebarFilter) -> usize {
-        if !self.snapshot.connected {
-            return 0;
-        }
         self.snapshot
             .tasks
             .iter()
             .filter(|t| match filter {
                 SidebarFilter::All => true,
                 SidebarFilter::Active => t.status == DownloadStatus::Active,
+                SidebarFilter::Waiting => t.status == DownloadStatus::Waiting,
                 SidebarFilter::Paused => t.status == DownloadStatus::Paused,
                 SidebarFilter::Completed => t.status == DownloadStatus::Completed,
+                SidebarFilter::Error => t.status == DownloadStatus::Error,
                 SidebarFilter::Category(cat) => t.category == cat,
             })
             .count()
@@ -245,20 +335,15 @@ impl IdmMainView {
             .child(
                 idm_tool_button("tb-add", "＋", rgb(0x16a34a), "新建任务", p).on_click(
                     cx.listener(|this, _, window, cx| {
-                        // 打开新建任务弹窗时优先回填上次选择的保存目录
-                        let preferred = this
+                        let mut default_dir = this
                             .state
                             .settings
-                            .last_save_dir
-                            .as_ref()
-                            .unwrap_or(&this.state.settings.default_download_dir)
+                            .default_download_dir
                             .to_string_lossy()
                             .into_owned();
-                        this.add_inputs
-                            .save_dir
-                            .update(cx, |i, cx| i.set_value(preferred, window, cx));
 
-                        // 自动检测系统剪贴板中的下载链接并预填
+                        // 自动检测系统剪贴板中的下载链接并预填，同时按分类自动定位子目录并触发探测
+                        let mut auto_probed = false;
                         if let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) {
                             let trimmed = clip.trim();
                             if trimmed.starts_with("http://")
@@ -273,19 +358,35 @@ impl IdmMainView {
                                     auto_start: true,
                                 }
                                 .inferred_filename();
+                                let cat = FileCategory::from_filename(&inferred);
+                                default_dir = this
+                                    .state
+                                    .settings
+                                    .resolve_save_dir(cat)
+                                    .to_string_lossy()
+                                    .into_owned();
                                 this.add_inputs
                                     .url
                                     .update(cx, |i, cx| i.set_value(trimmed.to_string(), window, cx));
                                 this.add_inputs
                                     .filename
                                     .update(cx, |i, cx| i.set_value(inferred, window, cx));
+                                auto_probed = true;
                             }
                         }
 
+                        this.add_inputs
+                            .save_dir
+                            .update(cx, |i, cx| i.set_value(default_dir, window, cx));
                         this.add_inputs.allow_overwrite = this.state.settings.allow_overwrite;
+                        this.add_inputs.replace_gid = None;
+                        this.add_inputs.probe_status = None;
                         this.add_tab = AddTaskTab::Basic;
                         this.show_settings_modal = false;
                         this.show_add_modal = true;
+                        if auto_probed {
+                            this.trigger_url_probe(window, cx);
+                        }
                         cx.notify();
                     }),
                 ),
@@ -345,9 +446,14 @@ impl IdmMainView {
             )
             .child(
                 idm_tool_button("tb-del", "✕", rgb(0xef4444), "删除", p).on_click(cx.listener(
-                    |this, _, _, _| {
+                    |this, _, _, cx| {
                         if let Some(gid) = this.state.selected_task_id.take() {
-                            this.engine.send(EngineCommand::Remove(gid));
+                            this.engine.send(EngineCommand::Remove {
+                                gid,
+                                delete_local_file: false,
+                            });
+                            this.notice = Some("已从列表移除任务（保留本地已下载文件）".into());
+                            cx.notify();
                         }
                     },
                 )),
@@ -356,23 +462,31 @@ impl IdmMainView {
             .child(
                 idm_tool_button("tb-folder", "📁", rgb(0xd97706), "打开目录", p).on_click(
                     cx.listener(|this, _, _, cx| {
-                        let target_dir = this
+                        let selected = this
                             .state
                             .selected_task_id
                             .as_deref()
-                            .and_then(|id| this.snapshot.tasks.iter().find(|t| t.id == id))
-                            .map(|t| t.save_dir.clone())
-                            .unwrap_or_else(|| this.state.settings.default_download_dir.clone());
-                        let _ = open_directory(&target_dir);
-                        this.notice = Some(format!("已打开目录: {}", target_dir.display()));
+                            .and_then(|id| this.snapshot.tasks.iter().find(|t| t.id == id));
+                        if let Some(task) = selected {
+                            let _ = reveal_file_in_directory(&task.full_path(), &task.save_dir);
+                            this.notice = Some(format!("已定位文件: {}", task.full_path().display()));
+                        } else {
+                            let target_dir = this.state.settings.default_download_dir.clone();
+                            let _ = open_directory(&target_dir);
+                            this.notice = Some(format!("已打开目录: {}", target_dir.display()));
+                        }
                         cx.notify();
                     }),
                 ),
             )
             .child(
                 idm_tool_button("tb-opt", "⚙", rgb(0x2563eb), "选项", p).on_click(cx.listener(
-                    |this, _, _, cx| {
+                    |this, _, window, cx| {
+                        // 每次打开设置弹窗时从当前已生效的 settings 重新构建表单，防止上次点「取消」的未保存脏数据残留
+                        this.settings_inputs =
+                            SettingsInputs::from_settings(&this.state.settings, window, cx);
                         this.show_add_modal = false;
+                        this.show_batch_modal = false;
                         this.show_settings_modal = true;
                         cx.notify();
                     },
@@ -396,21 +510,37 @@ impl IdmMainView {
             .child(div().w(px(220.0)).pr_2().child(Input::new(&self.search_input)))
     }
 
-    /// 渲染左侧经典 IDM 树形分类栏
+    /// 渲染左侧经典 IDM 树形分类栏（支持点击折叠/展开分类子树，并完整覆盖全部 5 种任务状态）
     fn render_category_tree(&self, p: IdmPalette, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.state.active_filter;
-        let nodes: Vec<(usize, SidebarFilter, &str, bool)> = vec![
-            (0, SidebarFilter::All, "▾ 全部下载", false),
-            (1, SidebarFilter::Category(FileCategory::Compressed), "压缩文件", true),
-            (2, SidebarFilter::Category(FileCategory::Document), "文档", true),
-            (3, SidebarFilter::Category(FileCategory::Music), "音乐", true),
-            (4, SidebarFilter::Category(FileCategory::Program), "程序", true),
-            (5, SidebarFilter::Category(FileCategory::Video), "视频", true),
-            (6, SidebarFilter::Category(FileCategory::Other), "其他", true),
-            (7, SidebarFilter::Active, "▸ 正在下载", false),
-            (8, SidebarFilter::Paused, "▸ 已暂停", false),
-            (9, SidebarFilter::Completed, "▸ 已完成", false),
-        ];
+        let expanded = self.state.categories_expanded;
+        let all_label = if expanded {
+            "▾ 全部下载"
+        } else {
+            "▸ 全部下载"
+        };
+
+        let mut nodes: Vec<(usize, SidebarFilter, &str, bool)> =
+            vec![(0, SidebarFilter::All, all_label, false)];
+
+        if expanded {
+            nodes.extend([
+                (1, SidebarFilter::Category(FileCategory::Compressed), "压缩文件", true),
+                (2, SidebarFilter::Category(FileCategory::Document), "文档", true),
+                (3, SidebarFilter::Category(FileCategory::Music), "音乐", true),
+                (4, SidebarFilter::Category(FileCategory::Program), "程序", true),
+                (5, SidebarFilter::Category(FileCategory::Video), "视频", true),
+                (6, SidebarFilter::Category(FileCategory::Other), "其他", true),
+            ]);
+        }
+
+        nodes.extend([
+            (7, SidebarFilter::Active, "● 正在下载", false),
+            (8, SidebarFilter::Waiting, "◔ 等待队列", false),
+            (9, SidebarFilter::Paused, "❚❚ 已暂停", false),
+            (10, SidebarFilter::Completed, "✓ 已完成", false),
+            (11, SidebarFilter::Error, "⚠ 下载出错", false),
+        ]);
 
         div()
             .flex()
@@ -429,7 +559,7 @@ impl IdmMainView {
                     .text_xs()
                     .font_medium()
                     .text_color(p.text)
-                    .child("分类"),
+                    .child("分类与状态"),
             )
             .child(
                 div()
@@ -452,7 +582,11 @@ impl IdmMainView {
                             .text_xs()
                             .text_color(p.text)
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.state.active_filter = filter;
+                                if filter == SidebarFilter::All && this.state.active_filter == SidebarFilter::All {
+                                    this.state.categories_expanded = !this.state.categories_expanded;
+                                } else {
+                                    this.state.active_filter = filter;
+                                }
                                 cx.notify();
                             }))
                             .child(label)
@@ -461,54 +595,139 @@ impl IdmMainView {
             )
     }
 
-    /// 渲染右侧真实任务列表表格
+    /// 渲染右侧真实任务列表表格（支持垂直滚动、双击直接打开文件、底部选中任务分片详情抽屉）
     fn render_task_list(&self, p: IdmPalette, cx: &mut Context<Self>) -> impl IntoElement {
         let tasks = self.visible_tasks(cx);
         let selected_id = self.state.selected_task_id.clone();
+        let selected_task = selected_id
+            .as_deref()
+            .and_then(|id| self.snapshot.tasks.iter().find(|t| t.id == id))
+            .cloned();
 
-        div()
+        let list_body = if tasks.is_empty() && !self.snapshot.connected {
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(p.muted)
+                .child("未连接到 aria2c，请检查内置引擎或启动 aria2c --enable-rpc")
+                .into_any_element()
+        } else if tasks.is_empty() {
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(p.muted)
+                .child("当前分类暂无下载任务，点击左上角「新建任务」添加真实下载链接")
+                .into_any_element()
+        } else {
+            div()
+                .id("task-scroll-container")
+                .flex()
+                .flex_col()
+                .flex_1()
+                .overflow_y_scroll()
+                .children(tasks.into_iter().enumerate().map(|(idx, task)| {
+                    let task_id = task.id.clone();
+                    let full_path = task.full_path();
+                    let save_dir = task.save_dir.clone();
+                    let status = task.status;
+                    let is_selected = selected_id.as_deref() == Some(task.id.as_str());
+                    render_idm_task_row(idx, &task, is_selected, p).on_click(cx.listener(
+                        move |this, ev: &ClickEvent, _, cx| {
+                            this.state.selected_task_id = Some(task_id.clone());
+                            // 双击任务行：若已完成且文件存在则直接打开文件，否则定位目录
+                            if ev.click_count() >= 2 {
+                                if status == DownloadStatus::Completed && full_path.exists() {
+                                    let _ = open_file(&full_path);
+                                    this.notice =
+                                        Some(format!("已打开文件: {}", full_path.display()));
+                                } else {
+                                    let _ = reveal_file_in_directory(&full_path, &save_dir);
+                                    this.notice =
+                                        Some(format!("已定位目录: {}", save_dir.display()));
+                                }
+                            }
+                            cx.notify();
+                        },
+                    ))
+                }))
+                .into_any_element()
+        };
+
+        let mut panel = div()
             .flex()
             .flex_col()
             .flex_1()
+            .overflow_hidden()
             .bg(p.panel_bg)
             .child(render_idm_table_header(p))
-            .child(if !self.snapshot.connected {
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_sm()
-                    .text_color(p.muted)
-                    .child("未连接到 aria2c，请先启动 aria2c --enable-rpc（默认端口 6800）")
-                    .into_any_element()
-            } else if tasks.is_empty() {
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_sm()
-                    .text_color(p.muted)
-                    .child("当前分类暂无下载任务，点击左上角「新建任务」添加真实下载链接")
-                    .into_any_element()
-            } else {
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .children(tasks.into_iter().enumerate().map(|(idx, task)| {
-                        let task_id = task.id.clone();
-                        let is_selected = selected_id.as_deref() == Some(task.id.as_str());
-                        render_idm_task_row(idx, &task, is_selected, p).on_click(cx.listener(
-                            move |this, _, _, cx| {
-                                this.state.selected_task_id = Some(task_id.clone());
-                                cx.notify();
-                            },
-                        ))
-                    }))
-                    .into_any_element()
-            })
+            .child(list_body);
+
+        if let Some(sel) = selected_task {
+            let open_path = sel.full_path();
+            let reveal_path = sel.full_path();
+            let reveal_dir = sel.save_dir.clone();
+            let copy_url = sel.url.clone();
+            let refresh_req = idm_core::NewDownloadRequest {
+                url: sel.url.clone(),
+                filename: Some(sel.filename.clone()),
+                save_dir: Some(sel.save_dir.clone()),
+                headers: sel.headers.clone(),
+                auto_start: true,
+            };
+            let refresh_gid = sel.id.clone();
+            let del_gid = sel.id.clone();
+
+            panel = panel.child(render_task_inspector(
+                &sel,
+                p,
+                cx.listener(move |this, _, _, cx| {
+                    if open_path.exists() {
+                        let _ = open_file(&open_path);
+                        this.notice = Some(format!("已打开文件: {}", open_path.display()));
+                    } else {
+                        this.notice = Some("本地文件尚未生成或已被移除".into());
+                    }
+                    cx.notify();
+                }),
+                cx.listener(move |this, _, _, cx| {
+                    let _ = reveal_file_in_directory(&reveal_path, &reveal_dir);
+                    this.notice = Some(format!("已定位文件: {}", reveal_path.display()));
+                    cx.notify();
+                }),
+                cx.listener(move |this, _, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(copy_url.clone()));
+                    this.notice = Some(format!("已复制下载链接: {copy_url}"));
+                    cx.notify();
+                }),
+                cx.listener(move |this, _, window, cx| {
+                    this.open_add_modal_with_request(refresh_req.clone(), window, cx);
+                    this.add_inputs.allow_overwrite = true;
+                    this.add_inputs.replace_gid = Some(refresh_gid.clone());
+                    this.notice =
+                        Some("请在弹窗中粘贴更新后的下载直链或 Cookie，点击「开始下载」将自动替换旧任务并无缝续传".into());
+                    cx.notify();
+                }),
+                cx.listener(move |this, _, _, cx| {
+                    this.engine.send(EngineCommand::Remove {
+                        gid: del_gid.clone(),
+                        delete_local_file: true,
+                    });
+                    if this.state.selected_task_id.as_deref() == Some(del_gid.as_str()) {
+                        this.state.selected_task_id = None;
+                    }
+                    this.notice = Some("已彻底删除该任务及本地文件".into());
+                    cx.notify();
+                }),
+            ));
+        }
+
+        panel
     }
 
     /// 渲染底部经典状态栏（显示真实 aria2 在线状态、选中任务错误原因与全局速度）
@@ -578,6 +797,9 @@ impl Render for IdmMainView {
                         cx.notify();
                     });
                 },
+                cx.listener(|this, _, window, cx| {
+                    this.trigger_url_probe(window, cx);
+                }),
                 cx.listener(|this, _, window, cx| {
                     let cur = this.add_inputs.save_dir.read(cx).value().trim().to_string();
                     let init = (!cur.is_empty()).then(|| PathBuf::from(&cur));
@@ -654,12 +876,13 @@ impl Render for IdmMainView {
                             max_download_limit: (!speed_limit.is_empty()).then_some(speed_limit),
                             headers,
                             proxy: (!task_proxy.is_empty()).then_some(task_proxy),
+                            replace_gid: this.add_inputs.replace_gid.take(),
                         });
                         this.add_inputs.url.update(cx, |i, cx| i.set_value("", window, cx));
                         this.add_inputs
                             .filename
                             .update(cx, |i, cx| i.set_value("", window, cx));
-                        this.notice = Some("已提交新下载任务到 aria2".into());
+                        this.notice = Some("已提交下载任务到 aria2".into());
                         this.show_add_modal = false;
                         cx.notify();
                     }
@@ -717,23 +940,41 @@ impl Render for IdmMainView {
                             .value()
                             .trim()
                             .to_string();
-                        let save_dir = if custom_dir.is_empty() {
-                            this.state.settings.default_download_dir.clone()
-                        } else {
-                            PathBuf::from(custom_dir)
-                        };
-                        this.state.settings.last_save_dir = Some(save_dir.clone());
-                        let _ = this
+                        let default_root = this
                             .state
                             .settings
-                            .save_to_file(&AppSettings::default_config_path());
+                            .default_download_dir
+                            .to_string_lossy()
+                            .into_owned();
+                        let use_auto_category = custom_dir.is_empty() || custom_dir == default_root;
+                        if !custom_dir.is_empty() {
+                            this.state.settings.last_save_dir = Some(PathBuf::from(&custom_dir));
+                            let _ = this
+                                .state
+                                .settings
+                                .save_to_file(&AppSettings::default_config_path());
+                        }
 
                         let count = urls.len();
                         for url in urls {
+                            let save_dir = if use_auto_category {
+                                let inferred = idm_core::NewDownloadRequest {
+                                    url: url.clone(),
+                                    filename: None,
+                                    save_dir: None,
+                                    headers: vec![],
+                                    auto_start: true,
+                                }
+                                .inferred_filename();
+                                let cat = FileCategory::from_filename(&inferred);
+                                this.state.settings.resolve_save_dir(cat)
+                            } else {
+                                PathBuf::from(&custom_dir)
+                            };
                             this.engine.send(EngineCommand::AddUri {
                                 url,
                                 filename: None,
-                                save_dir: Some(save_dir.clone()),
+                                save_dir: Some(save_dir),
                                 split: this.state.settings.default_split,
                                 max_connection_per_server: this
                                     .state
@@ -744,6 +985,7 @@ impl Render for IdmMainView {
                                 max_download_limit: None,
                                 headers: vec![],
                                 proxy: None,
+                                replace_gid: None,
                             });
                         }
                         this.batch_inputs
@@ -811,12 +1053,29 @@ impl Render for IdmMainView {
                     cx.notify();
                 }),
                 cx.listener(|this, _, _, cx| {
+                    let prev_startup_args = this.state.settings.to_aria2_startup_args();
+                    let prev_secret = this.state.settings.aria2.secret.clone();
+
                     this.settings_inputs.apply_to(&mut this.state.settings, cx);
                     let path = AppSettings::default_config_path();
                     let _ = this.state.settings.save_to_file(&path);
                     let _ = apply_autostart(this.state.settings.auto_start);
-                    Self::sync_global_options(&this.engine, &this.state.settings);
-                    this.notice = Some("设置已保存并实时应用到 aria2".into());
+
+                    let next_startup_args = this.state.settings.to_aria2_startup_args();
+                    let next_secret = this.state.settings.aria2.secret.clone();
+
+                    if prev_startup_args != next_startup_args || prev_secret != next_secret {
+                        this.engine.send(EngineCommand::RestartEngine {
+                            config: this.state.settings.aria2.clone(),
+                            startup_args: next_startup_args,
+                            global_options: this.state.settings.to_aria2_global_options(),
+                        });
+                        this.notice =
+                            Some("检测到带 * 引擎级参数变更，已自动热重启内置 aria2c 并应用新配置".into());
+                    } else {
+                        Self::sync_global_options(&this.engine, &this.state.settings);
+                        this.notice = Some("设置已保存并实时热更新到 aria2".into());
+                    }
                     this.show_settings_modal = false;
                     cx.notify();
                 }),

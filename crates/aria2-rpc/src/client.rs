@@ -135,4 +135,14 @@ impl Aria2Client {
         self.call("aria2.changeGlobalOption", vec![json!(options)])
             .await
     }
+
+    /// 立即将当前未完成会话持久化写入磁盘（对应 `aria2.saveSession`）
+    pub async fn save_session(&self) -> Result<String, Aria2Error> {
+        self.call("aria2.saveSession", vec![]).await
+    }
+
+    /// 请求 aria2 优雅关闭（对应 `aria2.shutdown`）
+    pub async fn shutdown(&self) -> Result<String, Aria2Error> {
+        self.call("aria2.shutdown", vec![]).await
+    }
 }

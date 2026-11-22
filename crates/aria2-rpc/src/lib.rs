@@ -10,7 +10,9 @@ use thiserror::Error;
 
 pub use client::Aria2Client;
 pub use process::{Aria2Process, Aria2ProcessConfig};
-pub use types::{AddUriOptions, Aria2File, Aria2TaskStatus, Aria2Version, GlobalOptions, GlobalStat};
+pub use types::{
+    AddUriOptions, Aria2File, Aria2TaskStatus, Aria2Uri, Aria2Version, GlobalOptions, GlobalStat,
+};
 
 /// aria2 RPC 通信与协议错误定义
 #[derive(Debug, Error)]

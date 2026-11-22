@@ -7,12 +7,13 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::*;
 
-/// 渲染「新建下载任务」完整弹窗（支持浏览目录、覆盖开关、限速、高级 HTTP）
+/// 渲染「新建下载任务」完整弹窗（支持远程探测大小/真实文件名、浏览目录、覆盖开关、限速、高级 HTTP）
 pub fn render_add_task_dialog(
     inputs: &AddTaskInputs,
     active_tab: AddTaskTab,
     p: IdmPalette,
     on_tab: impl Fn(AddTaskTab, &mut Window, &mut App) + Clone + 'static,
+    on_probe: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_browse: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_toggle_overwrite: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -46,12 +47,32 @@ pub fn render_add_task_dialog(
         .child(tab_btn("add-tab-basic", AddTaskTab::Basic, "常规下载"))
         .child(tab_btn("add-tab-http", AddTaskTab::HttpAdvanced, "高级 HTTP / 代理"));
 
+    let probe_hint = inputs
+        .probe_status
+        .clone()
+        .unwrap_or_else(|| "点击右侧「探测信息」可自动识别服务器真实文件名、大小与多线程支持".into());
+
     let content = match active_tab {
         AddTaskTab::Basic => div()
             .flex()
             .flex_col()
             .gap_3()
-            .child(form_row("下载地址:", &inputs.url, p))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().w(px(96.0)).text_xs().text_color(p.text).child("下载地址:"))
+                    .child(div().flex_1().child(Input::new(&inputs.url)))
+                    .child(Button::new("btn-add-probe").label("探测信息").on_click(on_probe)),
+            )
+            .child(
+                div()
+                    .pl(px(108.0))
+                    .text_xs()
+                    .text_color(rgb(0x2563eb))
+                    .child(probe_hint),
+            )
             .child(form_row("保存文件名:", &inputs.filename, p))
             .child(
                 div()
@@ -208,7 +229,7 @@ pub fn render_settings_dialog(
                     .pt_1()
                     .text_xs()
                     .text_color(p.muted)
-                    .child("注：带 * 号的配置项将在下次重启应用 / 引擎时生效，其余项立即热更新生效。"),
+                    .child("注：带 * 号的引擎参数修改后，点击「保存并应用」将自动为您热重启内置 aria2c 引擎立即生效。"),
             ),
     };
 

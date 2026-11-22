@@ -218,6 +218,48 @@ pub fn open_directory(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 在系统文件资源管理器中打开所在目录并高亮选中目标文件（若文件尚不存在则直接打开父目录）
+pub fn reveal_file_in_directory(file_path: &Path, fallback_dir: &Path) -> std::io::Result<()> {
+    if file_path.exists() {
+        #[cfg(windows)]
+        {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", file_path.display()))
+                .spawn()?;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .args(["-R", &file_path.to_string_lossy()])
+                .spawn()?;
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            open_directory(fallback_dir)?;
+        }
+        Ok(())
+    } else {
+        open_directory(fallback_dir)
+    }
+}
+
+/// 使用系统默认关联程序直接打开已下载完成的文件
+pub fn open_file(file_path: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer").arg(file_path).spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(file_path).spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open").arg(file_path).spawn()?;
+    }
+    Ok(())
+}
+
 /// 将指定标题的桌面窗口立刻恢复并置顶到前台（解决 Windows 后台弹窗无感问题）
 pub fn bring_window_to_front(title: &str) {
     #[cfg(windows)]

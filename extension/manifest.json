@@ -7,10 +7,19 @@
     "downloads",
     "contextMenus",
     "storage",
-    "cookies"
+    "cookies",
+    "scripting",
+    "activeTab"
   ],
   "host_permissions": [
     "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
   ],
   "action": {
     "default_title": "IDM-Aria2-RS 下载助手",

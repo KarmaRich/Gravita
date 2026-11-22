@@ -171,3 +171,128 @@ pub fn render_idm_task_row(
                 .child(task.category.display_name()),
         )
 }
+
+/// 渲染底部经典 IDM 风格选中任务详情与 32 槽动态分片位图面板
+pub fn render_task_inspector(
+    task: &DownloadTask,
+    p: IdmPalette,
+    on_open_file: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_reveal_dir: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_copy_url: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_refresh_url: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_delete_with_file: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let slots = task.piece_slots(32);
+    let pct = task_progress(task.completed_bytes, task.total_bytes);
+    let action_btn = |id: &'static str, label: &'static str, color: Rgba| {
+        div()
+            .id(id)
+            .px_2p5()
+            .py_0p5()
+            .rounded_sm()
+            .border_1()
+            .border_color(p.border)
+            .bg(p.panel_bg)
+            .text_xs()
+            .text_color(color)
+            .cursor_pointer()
+            .child(label)
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1p5()
+        .px_3()
+        .py_2()
+        .bg(p.header_bg)
+        .border_t_1()
+        .border_color(p.border)
+        .text_xs()
+        .text_color(p.text)
+        .child(
+            // 第一行：左侧文件名（超长自动截断），右侧固定统计信息
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .font_semibold()
+                        .child(format!("任务详情: {}", task.filename)),
+                )
+                .child(div().text_color(p.muted).child(format!(
+                    "已下载 {} / {} ({pct:.1}%)  |  并发连接: {}  |  分片数: {}",
+                    format_bytes(task.completed_bytes),
+                    format_bytes(task.total_bytes),
+                    task.connections,
+                    task.num_pieces.max(1)
+                ))),
+        )
+        .child(
+            // 第二行：独立操作按钮栏（支持 flex_wrap 自动换行，绝不因文件名过长而被挤出窗口）
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_1p5()
+                .child(action_btn("insp-open", "▶ 打开文件", rgb(0x16a34a)).on_click(on_open_file))
+                .child(action_btn("insp-dir", "📁 定位文件", rgb(0xd97706)).on_click(on_reveal_dir))
+                .child(action_btn("insp-copy", "🔗 复制链接", rgb(0x2563eb)).on_click(on_copy_url))
+                .child(
+                    action_btn("insp-refresh", "↻ 刷新链接/重下", rgb(0x0284c7))
+                        .on_click(on_refresh_url),
+                )
+                .child(
+                    action_btn("insp-del-file", "🗑 彻底删除(含本地文件)", rgb(0xdc2626))
+                        .on_click(on_delete_with_file),
+                ),
+        )
+        .child(
+            // 第三行：32 槽动态分片进度图
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().w(px(64.0)).text_color(p.muted).child("分片进度:"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .gap_0p5()
+                        .p_0p5()
+                        .bg(p.panel_bg)
+                        .border_1()
+                        .border_color(p.border)
+                        .children(slots.into_iter().map(|done| {
+                            div()
+                                .flex_1()
+                                .h(px(10.0))
+                                .bg(if done { rgb(0x2563eb) } else { p.progress_bg })
+                        })),
+                ),
+        )
+        .child(
+            // 第四行：完整保存路径与原始链接（各自占 50% 宽度并开启 overflow_hidden 防撑破）
+            div()
+                .flex()
+                .items_center()
+                .gap_4()
+                .text_color(p.muted)
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(format!("保存路径: {}", task.full_path().display())),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(format!("原始链接: {}", task.url)),
+                ),
+        )
+}

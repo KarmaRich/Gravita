@@ -18,8 +18,9 @@ impl BatchTaskInputs {
         let dir = default_dir.to_string();
         Self {
             urls: cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder("输入通配符如 https://example.com/ep_[01-10].mp4，或粘贴多行链接")
+                InputState::new(window, cx).placeholder(
+                    "输入通配符如 https://example.com/ep_[01-10].mp4，或多条链接（支持换行 / 逗号 / 分号分隔）",
+                )
             }),
             save_dir: cx.new(|cx| {
                 InputState::new(window, cx)
@@ -48,7 +49,7 @@ pub fn render_batch_dialog(
             div()
                 .text_xs()
                 .text_color(p.muted)
-                .child("支持多行链接粘贴，或 IDM 经典通配符（如 [01-10]、[a-d]）："),
+                .child("支持多条链接（换行、英文逗号 , 或分号 ; 分隔），以及多重通配符（如 [01-10]、[a-d]）："),
         )
         .child(div().h(px(140.0)).child(Input::new(&inputs.urls)))
         .child(

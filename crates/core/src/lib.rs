@@ -4,6 +4,7 @@ pub mod aria2_opts;
 pub mod batch;
 pub mod bridge;
 pub mod config;
+pub mod probe;
 pub mod task;
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,7 @@ use std::path::Path;
 
 pub use bridge::BridgeServer;
 pub use config::AppSettings;
+pub use probe::{UrlProbeInfo, probe_download_url};
 pub use task::{DownloadTask, NewDownloadRequest, TaskFilter, TaskStore};
 
 /// 下载任务状态（与 IDM 视图分类对应）

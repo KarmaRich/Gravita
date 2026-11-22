@@ -23,6 +23,12 @@ pub struct AddTaskInputs {
     pub user_agent: Entity<InputState>,
     pub cookie: Entity<InputState>,
     pub proxy: Entity<InputState>,
+    /// 远程链接探测状态提示（如 `文件大小: 128.50 MB | 支持多线程断点续传`）
+    pub probe_status: Option<String>,
+    /// 探测请求递增序号（防止旧的并发探测结果覆盖新结果）
+    pub probe_seq: u64,
+    /// 若当前弹窗由「刷新链接/重下」唤起，记录待替换清理的旧任务 GID
+    pub replace_gid: Option<String>,
 }
 
 impl AddTaskInputs {
@@ -41,6 +47,9 @@ impl AddTaskInputs {
             user_agent: mk("可选自定义 User-Agent", "", window, cx),
             cookie: mk("可选 Cookie 请求头（用于需登录态下载）", "", window, cx),
             proxy: mk("可选单任务代理，留空沿用全局代理", "", window, cx),
+            probe_status: None,
+            probe_seq: 0,
+            replace_gid: None,
         }
     }
 

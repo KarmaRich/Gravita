@@ -97,7 +97,7 @@ pub fn start_system_tray(cmd_tx: mpsc::UnboundedSender<EngineCommand>) {
                     } else if ev.id == resume_id {
                         let _ = cmd_tx.send(EngineCommand::UnpauseAll);
                     } else if ev.id == quit_id {
-                        std::process::exit(0);
+                        let _ = cmd_tx.send(EngineCommand::ShutdownAndExit);
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));

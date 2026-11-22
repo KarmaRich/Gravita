@@ -235,6 +235,14 @@ impl AppSettings {
             .unwrap_or_else(|| Path::new("."))
             .join("aria2.session")
     }
+
+    /// 返回默认任务历史持久化文件路径（`~/.idm-aria2-rs/tasks.json`）
+    pub fn default_tasks_path() -> PathBuf {
+        Self::default_config_path()
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("tasks.json")
+    }
     /// 根据文件分类解析最终保存路径
     pub fn resolve_save_dir(&self, category: FileCategory) -> PathBuf {
         let key = format!("{category:?}");

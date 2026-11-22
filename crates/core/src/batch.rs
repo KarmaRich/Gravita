@@ -2,24 +2,40 @@
 
 use std::collections::HashSet;
 
-/// 解析多行输入并展开通配符，返回去重后的最终下载 URL 列表
+/// 解析多行输入并递归展开所有 `[start-end]` 通配符，返回去重后的最终下载 URL 列表
 ///
 /// 支持语法：
 /// - 普通多行链接（自动忽略空行与 `#` 注释行）
 /// - 数字范围通配符：`https://example.com/file_[01-05].zip`（自动保留前导零宽度）
 /// - 字母范围通配符：`https://example.com/part_[a-d].rar`
+/// - 多重组合通配符：`https://example.com/season_[01-02]/ep_[01-03].mp4`
 pub fn expand_batch_urls(raw_input: &str) -> Vec<String> {
+    const MAX_TOTAL_URLS: usize = 1000;
     let mut results = Vec::new();
     let mut seen = HashSet::new();
 
-    for line in raw_input.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        for url in expand_single_pattern(trimmed) {
-            if seen.insert(url.clone()) {
-                results.push(url);
+    for raw_line in raw_input.lines() {
+        for segment in raw_line.split(|c| c == ';' || c == ',') {
+            let trimmed = segment.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let mut queue = vec![trimmed.to_string()];
+            while let Some(current) = queue.pop() {
+                let expanded = expand_single_pattern(&current);
+                if expanded.len() == 1 && expanded[0] == current {
+                    if seen.insert(current.clone()) {
+                        results.push(current);
+                        if results.len() >= MAX_TOTAL_URLS {
+                            return results;
+                        }
+                    }
+                } else {
+                    // 逆序压栈以保持原始展开顺序
+                    for item in expanded.into_iter().rev() {
+                        queue.push(item);
+                    }
+                }
             }
         }
     }
@@ -110,5 +126,23 @@ mod tests {
     fn test_invalid_pattern_keeps_original() {
         let urls = expand_batch_urls("https://example.com/file_[invalid].zip");
         assert_eq!(urls, vec!["https://example.com/file_[invalid].zip"]);
+    }
+
+    #[test]
+    fn test_expand_multi_wildcards() {
+        let urls = expand_batch_urls("https://example.com/s[1-2]/ep_[01-02]_[a-b].mp4");
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.com/s1/ep_01_a.mp4",
+                "https://example.com/s1/ep_01_b.mp4",
+                "https://example.com/s1/ep_02_a.mp4",
+                "https://example.com/s1/ep_02_b.mp4",
+                "https://example.com/s2/ep_01_a.mp4",
+                "https://example.com/s2/ep_01_b.mp4",
+                "https://example.com/s2/ep_02_a.mp4",
+                "https://example.com/s2/ep_02_b.mp4",
+            ]
+        );
     }
 }

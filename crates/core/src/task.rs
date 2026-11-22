@@ -78,11 +78,72 @@ pub struct DownloadTask {
     pub total_bytes: u64,
     pub completed_bytes: u64,
     pub speed_bytes_per_sec: u64,
+    /// 当前活跃并发连接数
+    #[serde(default)]
+    pub connections: u32,
+    /// 十六进制分片位图（来自 aria2 `bitfield`，用于绘制 IDM 风格分片区块图）
+    #[serde(default)]
+    pub bitfield: Option<String>,
+    /// 分片总数
+    #[serde(default)]
+    pub num_pieces: u32,
+    /// 单分片大小（字节）
+    #[serde(default)]
+    pub piece_length: u64,
     #[serde(default)]
     pub headers: Vec<String>,
     /// 下载失败时来自 aria2 的具体错误信息
     #[serde(default)]
     pub error_message: Option<String>,
+}
+
+impl DownloadTask {
+    /// 返回本地文件的完整保存路径
+    pub fn full_path(&self) -> PathBuf {
+        self.save_dir.join(&self.filename)
+    }
+
+    /// 将十六进制 `bitfield` 解析为固定槽位数（如 32 格）的分片完成状态数组，供 UI 渲染 IDM 分片进度格
+    pub fn piece_slots(&self, slot_count: usize) -> Vec<bool> {
+        if slot_count == 0 {
+            return Vec::new();
+        }
+        if self.status == DownloadStatus::Completed {
+            return vec![true; slot_count];
+        }
+        let Some(hex) = self.bitfield.as_deref().filter(|s| !s.is_empty()) else {
+            // 若 aria2 未返回 bitfield，则按总进度比例折算
+            let ratio = if self.total_bytes > 0 {
+                (self.completed_bytes as f64 / self.total_bytes as f64).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let filled = (ratio * slot_count as f64).round() as usize;
+            return (0..slot_count).map(|i| i < filled).collect();
+        };
+
+        let mut bits = Vec::with_capacity(hex.len() * 4);
+        for ch in hex.chars() {
+            if let Some(nibble) = ch.to_digit(16) {
+                for shift in (0..4).rev() {
+                    bits.push(((nibble >> shift) & 1) == 1);
+                }
+            }
+        }
+        let total_bits = if self.num_pieces > 0 {
+            (self.num_pieces as usize).min(bits.len()).max(1)
+        } else {
+            bits.len().max(1)
+        };
+        bits.truncate(total_bits);
+
+        (0..slot_count)
+            .map(|slot| {
+                let idx = (slot * total_bits / slot_count).min(bits.len().saturating_sub(1));
+                bits.get(idx).copied().unwrap_or(false)
+            })
+            .collect()
+    }
 }
 
 /// 任务列表筛选条件（对应 IDM 左侧分类树与顶部搜索框）
@@ -118,6 +179,51 @@ impl TaskStore {
         let before = self.tasks.len();
         self.tasks.retain(|t| t.id != id);
         self.tasks.len() < before
+    }
+
+    /// 返回所有任务的只读切片
+    pub fn all(&self) -> &[DownloadTask] {
+        &self.tasks
+    }
+
+    /// 将来自 aria2 的实时任务列表合并进本地仓库，并返回是否有持久化关键状态变更
+    pub fn merge_live_tasks(&mut self, live_tasks: Vec<DownloadTask>) -> bool {
+        let mut changed = false;
+        for live in live_tasks {
+            if let Some(existing) = self.tasks.iter_mut().find(|t| t.id == live.id) {
+                let status_changed = existing.status != live.status
+                    || existing.filename != live.filename
+                    || existing.total_bytes != live.total_bytes
+                    || existing.error_message != live.error_message;
+                let preserved_url = if live.url.is_empty()
+                    || (!live.url.starts_with("http://")
+                        && !live.url.starts_with("https://")
+                        && !live.url.starts_with("magnet:?")
+                        && !live.url.starts_with("ftp://"))
+                {
+                    existing.url.clone()
+                } else {
+                    live.url.clone()
+                };
+                let preserved_headers = if live.headers.is_empty() {
+                    existing.headers.clone()
+                } else {
+                    live.headers.clone()
+                };
+                *existing = DownloadTask {
+                    url: preserved_url,
+                    headers: preserved_headers,
+                    ..live
+                };
+                if status_changed {
+                    changed = true;
+                }
+            } else {
+                self.tasks.push(live);
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// 按条件筛选任务列表
@@ -194,6 +300,10 @@ mod tests {
             total_bytes: 1000,
             completed_bytes: 500,
             speed_bytes_per_sec: 100,
+            connections: 4,
+            bitfield: Some("f0".into()),
+            num_pieces: 8,
+            piece_length: 125,
             headers: vec![],
             error_message: None,
         });
