@@ -539,13 +539,22 @@ impl Render for IdmMainView {
                 cx.listener(|this, _, window, cx| {
                     let cur = this.add_inputs.save_dir.read(cx).value().trim().to_string();
                     let init = (!cur.is_empty()).then(|| PathBuf::from(&cur));
-                    if let Some(chosen) = pick_directory(init.as_deref()) {
-                        let s = chosen.to_string_lossy().into_owned();
-                        this.add_inputs
-                            .save_dir
-                            .update(cx, |i, cx| i.set_value(s, window, cx));
-                        cx.notify();
-                    }
+                    cx.spawn_in(window, async move |this, cx| {
+                        let chosen = cx
+                            .background_executor()
+                            .spawn(async move { pick_directory(init.as_deref()) })
+                            .await;
+                        if let Some(dir) = chosen {
+                            let s = dir.to_string_lossy().into_owned();
+                            let _ = this.update_in(cx, |view, window, cx| {
+                                view.add_inputs
+                                    .save_dir
+                                    .update(cx, |i, cx| i.set_value(s, window, cx));
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .detach();
                 }),
                 cx.listener(|this, _, _, cx| {
                     this.add_inputs.allow_overwrite = !this.add_inputs.allow_overwrite;
@@ -631,13 +640,22 @@ impl Render for IdmMainView {
                         .trim()
                         .to_string();
                     let init = (!cur.is_empty()).then(|| PathBuf::from(&cur));
-                    if let Some(chosen) = pick_directory(init.as_deref()) {
-                        let s = chosen.to_string_lossy().into_owned();
-                        this.batch_inputs
-                            .save_dir
-                            .update(cx, |i, cx| i.set_value(s, window, cx));
-                        cx.notify();
-                    }
+                    cx.spawn_in(window, async move |this, cx| {
+                        let chosen = cx
+                            .background_executor()
+                            .spawn(async move { pick_directory(init.as_deref()) })
+                            .await;
+                        if let Some(dir) = chosen {
+                            let s = dir.to_string_lossy().into_owned();
+                            let _ = this.update_in(cx, |view, window, cx| {
+                                view.batch_inputs
+                                    .save_dir
+                                    .update(cx, |i, cx| i.set_value(s, window, cx));
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .detach();
                 }),
                 cx.listener(|this, _, _, cx| {
                     this.show_batch_modal = false;
@@ -719,13 +737,22 @@ impl Render for IdmMainView {
                         .trim()
                         .to_string();
                     let init = (!cur.is_empty()).then(|| PathBuf::from(&cur));
-                    if let Some(chosen) = pick_directory(init.as_deref()) {
-                        let s = chosen.to_string_lossy().into_owned();
-                        this.settings_inputs
-                            .download_dir
-                            .update(cx, |i, cx| i.set_value(s, window, cx));
-                        cx.notify();
-                    }
+                    cx.spawn_in(window, async move |this, cx| {
+                        let chosen = cx
+                            .background_executor()
+                            .spawn(async move { pick_directory(init.as_deref()) })
+                            .await;
+                        if let Some(dir) = chosen {
+                            let s = dir.to_string_lossy().into_owned();
+                            let _ = this.update_in(cx, |view, window, cx| {
+                                view.settings_inputs
+                                    .download_dir
+                                    .update(cx, |i, cx| i.set_value(s, window, cx));
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .detach();
                 }),
                 move |flag, _, cx| {
                     entity_flag.update(cx, |this, cx| {
