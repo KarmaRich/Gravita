@@ -85,6 +85,7 @@ impl DesktopState {
                 completed_bytes: done,
                 speed_bytes_per_sec: speed,
                 headers: vec![],
+                error_message: None,
             });
         }
 
@@ -164,6 +165,7 @@ impl DesktopState {
             completed_bytes: 0,
             speed_bytes_per_sec: if req.auto_start { 4_200_000 } else { 0 },
             headers: req.headers,
+            error_message: None,
         });
         self.selected_task_id = Some(id.clone());
         id

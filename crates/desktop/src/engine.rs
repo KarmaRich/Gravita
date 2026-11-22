@@ -244,6 +244,10 @@ async fn sync_snapshot(client: &Aria2Client, snap: &Arc<Mutex<EngineSnapshot>>) 
 
             let mut tasks = Vec::new();
             for item in active.into_iter().chain(waiting).chain(stopped) {
+                // 过滤掉已手动移除的记录，避免在列表中误显示为「下载出错」
+                if item.status == "removed" {
+                    continue;
+                }
                 tasks.push(aria2_status_to_download_task(item));
             }
 
@@ -291,6 +295,18 @@ pub fn aria2_status_to_download_task(item: Aria2TaskStatus) -> DownloadTask {
 
     let category = FileCategory::from_filename(&filename);
 
+    let error_message = if status == DownloadStatus::Error {
+        let code = item.error_code.as_deref().unwrap_or("");
+        let msg = item.error_message.as_deref().unwrap_or("未知错误");
+        Some(if code.is_empty() {
+            msg.to_string()
+        } else {
+            format!("错误码 {code}: {msg}")
+        })
+    } else {
+        None
+    };
+
     DownloadTask {
         id: item.gid.clone(),
         gid: Some(item.gid.clone()),
@@ -303,6 +319,7 @@ pub fn aria2_status_to_download_task(item: Aria2TaskStatus) -> DownloadTask {
         completed_bytes: item.completed_length_u64(),
         speed_bytes_per_sec: item.download_speed_u64(),
         headers: vec![],
+        error_message,
     }
 }
 

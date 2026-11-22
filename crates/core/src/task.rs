@@ -80,6 +80,9 @@ pub struct DownloadTask {
     pub speed_bytes_per_sec: u64,
     #[serde(default)]
     pub headers: Vec<String>,
+    /// 下载失败时来自 aria2 的具体错误信息
+    #[serde(default)]
+    pub error_message: Option<String>,
 }
 
 /// 任务列表筛选条件（对应 IDM 左侧分类树与顶部搜索框）
@@ -192,6 +195,7 @@ mod tests {
             completed_bytes: 500,
             speed_bytes_per_sec: 100,
             headers: vec![],
+            error_message: None,
         });
 
         let matched = store.query(&TaskFilter {

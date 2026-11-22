@@ -474,7 +474,7 @@ impl IdmMainView {
             })
     }
 
-    /// 渲染底部经典状态栏（显示真实 aria2 在线状态与全局速度）
+    /// 渲染底部经典状态栏（显示真实 aria2 在线状态、选中任务错误原因与全局速度）
     fn render_statusbar(&self, p: IdmPalette) -> impl IntoElement {
         let status_text = if let Some(ver) = &self.snapshot.aria2_version {
             format!("● 已连接 aria2 v{ver}")
@@ -482,10 +482,15 @@ impl IdmMainView {
             "○ 未连接 aria2c".to_string()
         };
         let speed = format_speed(self.snapshot.global_download_speed);
-        let msg = self
-            .snapshot
-            .last_error
-            .clone()
+        let selected_err = self
+            .state
+            .selected_task_id
+            .as_deref()
+            .and_then(|id| self.snapshot.tasks.iter().find(|t| t.id == id))
+            .and_then(|t| t.error_message.clone());
+        let msg = selected_err
+            .or_else(|| self.snapshot.last_error.clone())
+            .or_else(|| self.notice.clone())
             .unwrap_or_else(|| "就绪".to_string());
 
         div()
