@@ -117,6 +117,12 @@ pub struct AppSettings {
     /// 禁用 IPv6（需重启引擎）
     #[serde(default)]
     pub disable_ipv6: bool,
+    /// 下载完成或失败时发送系统通知
+    #[serde(default = "default_true")]
+    pub enable_notifications: bool,
+    /// 开机自动启动（Windows 注册表启动项）
+    #[serde(default)]
+    pub auto_start: bool,
 }
 
 fn default_true() -> bool {
@@ -206,6 +212,8 @@ impl Default for AppSettings {
             enable_session_persistence: true,
             save_session_interval_secs: 60,
             disable_ipv6: false,
+            enable_notifications: true,
+            auto_start: false,
         }
     }
 }

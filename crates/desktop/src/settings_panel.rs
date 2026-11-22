@@ -41,6 +41,8 @@ pub enum SettingsFlag {
     BtSaveMetadata,
     EnableSessionPersistence,
     DisableIpv6,
+    EnableNotifications,
+    AutoStart,
 }
 
 /// 选项弹窗全量输入状态集合
@@ -53,6 +55,8 @@ pub struct SettingsInputs {
     pub allow_overwrite: bool,
     pub auto_file_renaming: bool,
     pub remote_time: bool,
+    pub enable_notifications: bool,
+    pub auto_start: bool,
     // 2. 连接与限速
     pub max_concurrent: Entity<InputState>,
     pub split: Entity<InputState>,
@@ -99,6 +103,8 @@ impl SettingsInputs {
             allow_overwrite: s.allow_overwrite,
             auto_file_renaming: s.auto_file_renaming,
             remote_time: s.remote_time,
+            enable_notifications: s.enable_notifications,
+            auto_start: s.auto_start,
             max_concurrent: mk(s.max_concurrent_downloads.to_string(), "1 ~ 32", window, cx),
             split: mk(s.default_split.to_string(), "1 ~ 64", window, cx),
             max_conn_per_server: mk(s.max_connection_per_server.to_string(), "1 ~ 16", window, cx),
@@ -142,6 +148,8 @@ impl SettingsInputs {
             SettingsFlag::BtSaveMetadata => self.bt_save_metadata = !self.bt_save_metadata,
             SettingsFlag::EnableSessionPersistence => self.enable_session_persistence = !self.enable_session_persistence,
             SettingsFlag::DisableIpv6 => self.disable_ipv6 = !self.disable_ipv6,
+            SettingsFlag::EnableNotifications => self.enable_notifications = !self.enable_notifications,
+            SettingsFlag::AutoStart => self.auto_start = !self.auto_start,
         }
     }
 
@@ -156,6 +164,8 @@ impl SettingsInputs {
         s.allow_overwrite = self.allow_overwrite;
         s.auto_file_renaming = self.auto_file_renaming;
         s.remote_time = self.remote_time;
+        s.enable_notifications = self.enable_notifications;
+        s.auto_start = self.auto_start;
 
         if let Ok(v) = val(&self.max_concurrent).parse::<u32>() { s.max_concurrent_downloads = v.clamp(1, 32); }
         if let Ok(v) = val(&self.split).parse::<u32>() { s.default_split = v.clamp(1, 64); }

@@ -6,6 +6,7 @@ mod engine;
 mod settings_dialog;
 mod settings_panel;
 mod state;
+mod system;
 mod ui;
 mod ui_parts;
 

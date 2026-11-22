@@ -8,6 +8,7 @@ use crate::settings_panel::{
     SettingsInputs, SettingsTab, bring_window_to_front, open_directory, pick_directory,
 };
 use crate::state::{DesktopState, SidebarFilter, format_speed};
+use crate::system::{apply_autostart, send_system_notification};
 use crate::ui_parts::{
     IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row,
 };
@@ -15,6 +16,7 @@ use gpui_kit::base::StyledExt;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::*;
 use idm_core::{AppSettings, DownloadStatus, DownloadTask, FileCategory};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// IDM 主窗口视图实体
@@ -31,6 +33,7 @@ pub struct IdmMainView {
     batch_inputs: BatchTaskInputs,
     settings_inputs: SettingsInputs,
     search_input: Entity<InputState>,
+    last_task_statuses: HashMap<String, DownloadStatus>,
     notice: Option<String>,
 }
 
@@ -73,7 +76,31 @@ impl IdmMainView {
                     .timer(std::time::Duration::from_millis(500))
                     .await;
                 let ok = this.update_in(cx, |view, window, cx| {
-                    view.snapshot = view.engine.snapshot();
+                    let next = view.engine.snapshot();
+                    if view.state.settings.enable_notifications {
+                        for t in &next.tasks {
+                            if let Some(prev) = view.last_task_statuses.get(&t.id) {
+                                if *prev != DownloadStatus::Completed
+                                    && t.status == DownloadStatus::Completed
+                                {
+                                    send_system_notification(
+                                        "IDM-Aria2-RS 下载完成",
+                                        format!("已完成下载: {}", t.filename),
+                                    );
+                                } else if *prev != DownloadStatus::Error
+                                    && t.status == DownloadStatus::Error
+                                {
+                                    send_system_notification(
+                                        "IDM-Aria2-RS 下载失败",
+                                        format!("下载出错: {}", t.filename),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    view.last_task_statuses =
+                        next.tasks.iter().map(|t| (t.id.clone(), t.status)).collect();
+                    view.snapshot = next;
                     if let Some(req) = view.engine.pop_pending_request() {
                         view.open_add_modal_with_request(req, window, cx);
                         window.activate_window();
@@ -102,6 +129,7 @@ impl IdmMainView {
             batch_inputs,
             settings_inputs,
             search_input,
+            last_task_statuses: HashMap::new(),
             notice: None,
         }
     }
@@ -777,6 +805,7 @@ impl Render for IdmMainView {
                     this.settings_inputs.apply_to(&mut this.state.settings, cx);
                     let path = AppSettings::default_config_path();
                     let _ = this.state.settings.save_to_file(&path);
+                    let _ = apply_autostart(this.state.settings.auto_start);
                     Self::sync_global_options(&this.engine, &this.state.settings);
                     this.notice = Some("设置已保存并实时应用到 aria2".into());
                     this.show_settings_modal = false;
