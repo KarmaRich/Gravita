@@ -28,19 +28,40 @@ fn default_true() -> bool {
 }
 
 impl NewDownloadRequest {
-    /// 推断最终文件名：优先使用显式传入的 filename，否则从 URL 末尾提取
+    /// 推断最终文件名：优先使用显式传入的 filename，否则从 URL 末尾提取并进行 URL 解码
     pub fn inferred_filename(&self) -> String {
         if let Some(name) = self.filename.as_deref().filter(|s| !s.trim().is_empty()) {
-            return name.trim().to_string();
+            return percent_decode(name.trim());
         }
         let path_part = self.url.split('?').next().unwrap_or(&self.url);
-        path_part
+        let raw = path_part
             .rsplit('/')
             .next()
             .filter(|s| !s.is_empty())
-            .unwrap_or("download.bin")
-            .to_string()
+            .unwrap_or("download.bin");
+        percent_decode(raw)
     }
+}
+
+/// 轻量 URL 百分号解码（例如 `%E6%B5%8B%E8%AF%95.zip` -> `测试.zip`）
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(val) = u8::from_str_radix(hex, 16) {
+                    out.push(val);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
 }
 
 /// 桌面端展示与持久化的下载任务实体
@@ -145,6 +166,15 @@ mod tests {
             auto_start: true,
         };
         assert_eq!(req.inferred_filename(), "setup_v1.exe");
+
+        let cn_req = NewDownloadRequest {
+            url: "https://example.com/%E6%B5%8B%E8%AF%95.zip".into(),
+            filename: None,
+            save_dir: None,
+            headers: vec![],
+            auto_start: true,
+        };
+        assert_eq!(cn_req.inferred_filename(), "测试.zip");
     }
 
     #[test]

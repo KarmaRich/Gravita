@@ -207,3 +207,66 @@ pub fn open_directory(path: &Path) -> std::io::Result<()> {
     { std::process::Command::new("xdg-open").arg(path).spawn()?; }
     Ok(())
 }
+
+/// 将指定标题的桌面窗口立刻恢复并置顶到前台（解决 Windows 后台弹窗无感问题）
+pub fn bring_window_to_front(title: &str) {
+    #[cfg(windows)]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn FindWindowW(class_name: *const u16, window_name: *const u16) -> isize;
+            fn ShowWindow(hwnd: isize, cmd_show: i32) -> i32;
+            fn SetWindowPos(
+                hwnd: isize,
+                insert_after: isize,
+                x: i32,
+                y: i32,
+                cx: i32,
+                cy: i32,
+                flags: u32,
+            ) -> i32;
+            fn SetForegroundWindow(hwnd: isize) -> i32;
+        }
+
+        const SW_RESTORE: i32 = 9;
+        const HWND_TOPMOST: isize = -1;
+        const HWND_NOTOPMOST: isize = -2;
+        const SWP_NOMOVE: u32 = 0x0002;
+        const SWP_NOSIZE: u32 = 0x0001;
+        const SWP_SHOWWINDOW: u32 = 0x0040;
+
+        let wide: Vec<u16> = OsStr::new(title).encode_wide().chain(Some(0)).collect();
+        unsafe {
+            let hwnd = FindWindowW(std::ptr::null(), wide.as_ptr());
+            if hwnd != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
+                SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+                );
+                SetWindowPos(
+                    hwnd,
+                    HWND_NOTOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+                );
+                SetForegroundWindow(hwnd);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = title;
+    }
+}

@@ -19,6 +19,10 @@ fn main() {
         gpui_kit::init(cx);
 
         let options = WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some("IDM-Aria2-RS 下载器".into()),
+                ..Default::default()
+            }),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
                 size(px(1080.0), px(680.0)),

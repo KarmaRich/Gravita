@@ -4,7 +4,9 @@ use crate::batch_dialog::{BatchTaskInputs, preview_batch_urls, render_batch_dial
 use crate::dialogs::{AddTaskInputs, AddTaskTab};
 use crate::engine::{DownloadEngine, EngineCommand, EngineSnapshot};
 use crate::settings_dialog::{render_add_task_dialog, render_settings_dialog};
-use crate::settings_panel::{SettingsInputs, SettingsTab, open_directory, pick_directory};
+use crate::settings_panel::{
+    SettingsInputs, SettingsTab, bring_window_to_front, open_directory, pick_directory,
+};
 use crate::state::{DesktopState, SidebarFilter, format_speed};
 use crate::ui_parts::{
     IdmPalette, idm_tool_button, render_idm_table_header, render_idm_task_row,
@@ -74,7 +76,9 @@ impl IdmMainView {
                     view.snapshot = view.engine.snapshot();
                     if let Some(req) = view.engine.pop_pending_request() {
                         view.open_add_modal_with_request(req, window, cx);
+                        window.activate_window();
                         cx.activate(true);
+                        bring_window_to_front("IDM-Aria2-RS 下载器");
                     }
                     cx.notify();
                 });
@@ -120,7 +124,7 @@ impl IdmMainView {
             .unwrap_or(&self.state.settings.default_download_dir)
             .to_string_lossy()
             .into_owned();
-        let filename = req.filename.unwrap_or_default();
+        let filename = req.inferred_filename();
         let referer = extract_header(&req.headers, "referer").unwrap_or_default();
         let ua = extract_header(&req.headers, "user-agent").unwrap_or_default();
         let cookie = extract_header(&req.headers, "cookie").unwrap_or_default();
@@ -231,9 +235,20 @@ impl IdmMainView {
                                 || trimmed.starts_with("https://")
                                 || trimmed.starts_with("magnet:?")
                             {
+                                let inferred = idm_core::NewDownloadRequest {
+                                    url: trimmed.to_string(),
+                                    filename: None,
+                                    save_dir: None,
+                                    headers: vec![],
+                                    auto_start: true,
+                                }
+                                .inferred_filename();
                                 this.add_inputs
                                     .url
                                     .update(cx, |i, cx| i.set_value(trimmed.to_string(), window, cx));
+                                this.add_inputs
+                                    .filename
+                                    .update(cx, |i, cx| i.set_value(inferred, window, cx));
                             }
                         }
 
