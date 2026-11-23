@@ -219,16 +219,16 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    /// 返回默认配置文件路径（优先用户主目录下 `.idm-aria2-rs/settings.json`）
+    /// 返回默认配置文件路径（优先用户主目录下 `.gravita/settings.json`）
     pub fn default_config_path() -> PathBuf {
         let base = std::env::var_os("USERPROFILE")
             .or_else(|| std::env::var_os("HOME"))
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        base.join(".idm-aria2-rs").join("settings.json")
+        base.join(".gravita").join("settings.json")
     }
 
-    /// 返回默认 aria2 会话文件路径（`~/.idm-aria2-rs/aria2.session`）
+    /// 返回默认 aria2 会话文件路径（`~/.gravita/aria2.session`）
     pub fn default_session_path() -> PathBuf {
         Self::default_config_path()
             .parent()
@@ -236,7 +236,7 @@ impl AppSettings {
             .join("aria2.session")
     }
 
-    /// 返回默认任务历史持久化文件路径（`~/.idm-aria2-rs/tasks.json`）
+    /// 返回默认任务历史持久化文件路径（`~/.gravita/tasks.json`）
     pub fn default_tasks_path() -> PathBuf {
         Self::default_config_path()
             .parent()

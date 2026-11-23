@@ -153,7 +153,7 @@ async fn handle_connection(
             write_json_response(
                 &mut stream,
                 "200 OK",
-                r#"{"status":"ok","service":"idm-aria2-rs"}"#,
+                r#"{"status":"ok","service":"gravita"}"#,
             )
             .await
         }

@@ -1,4 +1,4 @@
-//! IDM-Aria2-RS 核心领域模型、任务管理、配置持久化与本地插件桥接服务
+//! Gravita 核心领域模型、任务管理、配置持久化与本地插件桥接服务
 
 pub mod aria2_opts;
 pub mod batch;

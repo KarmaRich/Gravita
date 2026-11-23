@@ -93,7 +93,7 @@
 | `rpc-listen-port` | 端口 | `16801`（内置专属） | 需重启 | RPC 监听端口 |
 | `rpc-secret` | 字符串 | 空 | 需重启 | RPC 鉴权 Token |
 | `rpc-allow-origin-all` | `true` / `false` | `false` | 需重启 | 允许跨域 RPC 访问 |
-| `save-session` | 文件路径 | `~/.idm-aria2-rs/aria2.session` | 需重启 | 退出时保存未完成任务列表（重启自动恢复） |
+| `save-session` | 文件路径 | `~/.gravita/aria2.session` | 需重启 | 退出时保存未完成任务列表（重启自动恢复） |
 | `input-file` | 文件路径 | 同 `save-session` | 需重启 | 启动时从会话文件恢复未完成任务 |
 | `save-session-interval` | 秒 | `60` | 需重启 | 定时保存会话间隔 |
 | `disable-ipv6` | `true` / `false` | `false` | 需重启 | 禁用 IPv6（部分网络环境下可减少超时） |

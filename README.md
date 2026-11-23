@@ -26,7 +26,7 @@
   - 支持多条链接（换行、逗号 `,`、分号 `;` 分隔）批量导入。
   - 支持 IDM 经典数字范围（自动保留前导零宽度，如 `[01-20]`）、字母范围（如 `[a-d]`）以及多重笛卡尔积组合通配符（如 `https://example.com/s[1-2]/ep_[01-05]_[a-b].mp4`）实时预览与展开。
 - **双轨持久化与引擎热重启 (`engine.rs`)**：
-  - **历史记录永久保存**：`~/.idm-aria2-rs/tasks.json` 与 `aria2.session` 双轨合并，软件重启后已完成、已暂停与出错任务及其原始 URL / 请求头完整保留。
+  - **历史记录永久保存**：`~/.gravita/tasks.json` 与 `aria2.session` 双轨合并，软件重启后已完成、已暂停与出错任务及其原始 URL / 请求头完整保留。
   - **5 大分类设置与引擎热重启**：涵盖常规保存、连接限速、HTTP/代理、BT/磁力、引擎会话共 30+ 项参数；普通参数通过 `aria2.changeGlobalOption` 毫秒级热更新，带 `*` 的启动级参数（磁盘缓存、预分配、证书校验、RPC Secret、DHT 等）修改保存后**自动在后台热重启内置 `aria2c` 子进程立即生效**。
 - **纯原生 Win32 系统集成 (`system.rs` & `tray.rs`)**：
   - **零外部 Shell 进程调用**：通过 FFI 直接调用 `shell32.dll` (`Shell_NotifyIconW`) 弹出原生完成/失败气泡通知，调用 `advapi32.dll` (`RegSetValueExW`) 管理 Windows 开机自启，绝不拉起隐藏 `powershell.exe` 或 `reg.exe`，杜绝杀毒软件/HIPS 误报拦截。
@@ -110,7 +110,7 @@ node --test extension/src/filter.test.js
 
 ## 五、 配置文件与数据存储位置
 
-应用运行期间的所有持久化文件均存放在用户主目录的 `.idm-aria2-rs` 文件夹下（Windows 下为 `C:\Users\<用户名>\.idm-aria2-rs\`）：
+应用运行期间的所有持久化文件均存放在用户主目录的 `.gravita` 文件夹下（Windows 下为 `C:\Users\<用户名>\.gravita\`）：
 - `settings.json`：桌面端全部配置项持久化文件。
 - `tasks.json`：历史下载任务（含已完成/已暂停/出错任务、原始 URL 与请求头）持久化仓库。
 - `aria2.session`：Aria2 引擎未完成任务与 BT/磁力分片进度会话文件。
