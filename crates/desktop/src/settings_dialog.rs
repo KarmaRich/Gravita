@@ -55,8 +55,8 @@ pub fn render_add_task_dialog(
         .unwrap_or_else(|| "点击右侧「探测信息」可自动识别服务器真实文件名、大小与多线程支持".into());
 
     let proxy_label = match configured_proxy.filter(|s| !s.trim().is_empty()) {
-        Some(px) => format!("使用代理下载（默认使用选项预设代理: {px}，或在高级页指定其他代理）"),
-        None => "使用代理下载（可在「高级 HTTP / 代理」页填写单任务代理，或在「选项」中配置预设代理）".to_string(),
+        Some(px) => format!("使用代理下载 ({px})"),
+        None => "使用代理下载".to_string(),
     };
 
     let content = match active_tab {

@@ -173,6 +173,7 @@ pub fn checkbox_row(
             div()
                 .w(px(16.0))
                 .h(px(16.0))
+                .flex_shrink_0()
                 .flex()
                 .items_center()
                 .justify_center()

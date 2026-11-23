@@ -47,8 +47,8 @@ pub fn render_batch_dialog(
     on_submit: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let proxy_label = match configured_proxy.filter(|s| !s.trim().is_empty()) {
-        Some(px) => format!("使用代理下载（选项预设代理: {px}）"),
-        None => "使用代理下载（请先在「选项 -> HTTP 与代理」中配置预设代理）".to_string(),
+        Some(px) => format!("使用代理下载 ({px})"),
+        None => "使用代理下载".to_string(),
     };
 
     let body = div()
