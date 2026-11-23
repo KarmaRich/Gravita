@@ -31,7 +31,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Build Portable & Browser Extension via package.ps1
+      - name: Build Portable & Browser Extension (.zip + .crx) via package.ps1
         shell: pwsh
         run: |
           $TagName = if ("${{ github.event.inputs.tag }}") { "${{ github.event.inputs.tag }}" } else { "${{ github.ref_name }}" }
@@ -40,6 +40,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifact | Out-Null
           Copy-Item "dist\Gravita-v*-win64.zip" -Destination "artifact\Gravita-$TagName-windows-x86_64-portable.zip"
           Copy-Item "dist\Gravita-v*-win64\Gravita-Browser-Extension.zip" -Destination "artifact\Gravita-Browser-Extension-$TagName.zip"
+          Copy-Item "dist\Gravita-v*-win64\Gravita-Browser-Extension.crx" -Destination "artifact\Gravita-Browser-Extension-$TagName.crx"
 
       - name: Build Windows NSIS Setup Installer (.exe)
         shell: pwsh

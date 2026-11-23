@@ -46,9 +46,14 @@ Get-ChildItem (Join-Path $RootDir "extension\src\*.js") | Where-Object { $_.Name
     Copy-Item $_.FullName -Destination (Join-Path $OutDir "extension\src\$($_.Name)")
 }
 
-# 额外打包一份单独的浏览器扩展 zip 方便分发
+# 额外打包一份单独的浏览器扩展 .zip 与 .crx 安装包方便分发
 $ExtZipPath = Join-Path $OutDir "Gravita-Browser-Extension.zip"
+$ExtCrxPath = Join-Path $OutDir "Gravita-Browser-Extension.crx"
 Compress-Archive -Path (Join-Path $OutDir "extension\*") -DestinationPath $ExtZipPath -Force
+node (Join-Path $RootDir "scripts\pack-crx.mjs") $ExtZipPath $ExtCrxPath
+if ($LASTEXITCODE -ne 0) {
+    throw "生成浏览器扩展 .crx 包失败！"
+}
 
 Write-Host "==> [4/4] 正在生成便携版发行压缩包: $ZipPath ..." -ForegroundColor Cyan
 Compress-Archive -Path "$OutDir\*" -DestinationPath $ZipPath -Force
@@ -59,5 +64,5 @@ $ZipSizeMb = [Math]::Round((Get-Item $ZipPath).Length / 1MB, 2)
 Write-Host ""
 Write-Host "✔ 打包完成！" -ForegroundColor Green
 Write-Host "  - 主程序路径: $OutDir\Gravita.exe ($ExeSizeMb MB)"
-Write-Host "  - 浏览器扩展: $OutDir\extension (及 $ExtZipPath)"
+Write-Host "  - 浏览器扩展: $ExtZipPath 及 $ExtCrxPath"
 Write-Host "  - 完整便携包: $ZipPath ($ZipSizeMb MB)"
