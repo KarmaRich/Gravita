@@ -123,6 +123,12 @@ pub struct AppSettings {
     /// 开机自动启动（Windows 注册表启动项）
     #[serde(default)]
     pub auto_start: bool,
+    /// 启动时自动检查 GitHub Release 新版本更新
+    #[serde(default = "default_true")]
+    pub auto_check_update: bool,
+    /// 用户选择忽略提醒的更新版本号（如 "v0.2.0"）
+    #[serde(default)]
+    pub ignored_update_version: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -214,6 +220,8 @@ impl Default for AppSettings {
             disable_ipv6: false,
             enable_notifications: true,
             auto_start: false,
+            auto_check_update: true,
+            ignored_update_version: None,
         }
     }
 }

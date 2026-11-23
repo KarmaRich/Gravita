@@ -6,6 +6,7 @@ pub mod bridge;
 pub mod config;
 pub mod probe;
 pub mod task;
+pub mod updater;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -14,6 +15,10 @@ pub use bridge::BridgeServer;
 pub use config::AppSettings;
 pub use probe::{UrlProbeInfo, probe_download_url};
 pub use task::{DownloadTask, NewDownloadRequest, TaskFilter, TaskStore};
+pub use updater::{
+    CURRENT_VERSION, GITHUB_LATEST_RELEASE_API, GITHUB_REPO_URL, UpdateInfo, check_github_update,
+    is_newer_version,
+};
 
 /// 下载任务状态（与 IDM 视图分类对应）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

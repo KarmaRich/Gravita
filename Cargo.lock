@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "aria2-rpc"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "reqwest",
  "serde",
@@ -3350,7 +3350,7 @@ checksum = "913a7d294ad056474749152107309fdee3ec17d2482d1ab70fdc61a81c64b9a3"
 
 [[package]]
 name = "idm-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "aria2-rpc",
  "reqwest",
@@ -3363,7 +3363,7 @@ dependencies = [
 
 [[package]]
 name = "idm-desktop"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "aria2-rpc",
  "embed-resource",

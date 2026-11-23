@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $RootDir = Split-Path -Parent $PSScriptRoot
 Set-Location $RootDir
 
-$Version = "0.1.0"
+$Version = "0.3.0"
 $ReleaseName = "Gravita-v$Version-win64"
 $DistDir = Join-Path $RootDir "dist"
 $OutDir = Join-Path $DistDir $ReleaseName

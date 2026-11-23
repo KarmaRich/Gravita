@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! Gravita (引力下载器) 桌面客户端入口（基于 Rust + GPUI + gpui-kit）
 
+mod about_dialog;
 mod batch_dialog;
 mod dialogs;
 mod engine;

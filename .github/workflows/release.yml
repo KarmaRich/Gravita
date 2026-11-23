@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "手动触发发布的版本号 (例如 v0.1.0)"
+        description: "手动触发发布的版本号 (例如 v0.3.0)"
         required: true
-        default: "v0.1.0"
+        default: "v0.3.0"
 
 permissions:
   contents: write

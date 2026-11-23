@@ -201,7 +201,8 @@ pub fn render_settings_dialog(
             .child(chk("f-ren", "同名文件自动重命名 (auto-file-renaming)", inputs.auto_file_renaming, SettingsFlag::AutoFileRenaming))
             .child(chk("f-rtime", "保留服务器修改时间 (remote-time)", inputs.remote_time, SettingsFlag::RemoteTime))
             .child(chk("f-notif", "下载完成或失败时发送系统通知", inputs.enable_notifications, SettingsFlag::EnableNotifications))
-            .child(chk("f-autostart", "开机自动启动 Gravita", inputs.auto_start, SettingsFlag::AutoStart)),
+            .child(chk("f-autostart", "开机自动启动 Gravita", inputs.auto_start, SettingsFlag::AutoStart))
+            .child(chk("f-autoupdate", "启动时自动检查 GitHub 新版本更新", inputs.auto_check_update, SettingsFlag::AutoCheckUpdate)),
         SettingsTab::Connection => div()
             .flex()
             .flex_col()

@@ -1,12 +1,13 @@
 //! 仿经典 IDM (Internet Download Manager) 桌面主界面（已接入真实 aria2 后台引擎）
 
+use crate::about_dialog::{render_about_dialog, render_update_dialog};
 use crate::batch_dialog::{BatchTaskInputs, preview_batch_urls, render_batch_dialog};
 use crate::dialogs::{AddTaskInputs, AddTaskTab};
 use crate::engine::{DownloadEngine, EngineCommand, EngineSnapshot};
 use crate::settings_dialog::{render_add_task_dialog, render_settings_dialog};
 use crate::settings_panel::{
     SettingsInputs, SettingsTab, bring_window_to_front, hide_window, open_directory, open_file,
-    pick_directory, reveal_file_in_directory,
+    open_url_in_browser, pick_directory, reveal_file_in_directory,
 };
 use crate::state::{DesktopState, SidebarFilter, format_bytes, format_speed};
 use crate::system::{apply_autostart, send_system_notification};
@@ -18,7 +19,10 @@ use crate::ui_parts::{
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::*;
-use idm_core::{AppSettings, DownloadStatus, DownloadTask, FileCategory, probe_download_url};
+use idm_core::{
+    AppSettings, CURRENT_VERSION, DownloadStatus, DownloadTask, FileCategory, GITHUB_REPO_URL,
+    UpdateInfo, check_github_update, probe_download_url,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -30,6 +34,11 @@ pub struct IdmMainView {
     show_add_modal: bool,
     show_batch_modal: bool,
     show_settings_modal: bool,
+    show_about_modal: bool,
+    update_prompt: Option<UpdateInfo>,
+    checking_update: bool,
+    about_update_status: Option<String>,
+    pending_update_installer: Option<PathBuf>,
     add_tab: AddTaskTab,
     settings_tab: SettingsTab,
     add_inputs: AddTaskInputs,
@@ -104,6 +113,27 @@ impl IdmMainView {
                     }
                     view.last_task_statuses =
                         next.tasks.iter().map(|t| (t.id.clone(), t.status)).collect();
+                    // 若正在等待自动更新安装包下载完成，一旦完成则自动拉起安装向导
+                    if let Some(installer_path) = view.pending_update_installer.clone() {
+                        if next.tasks.iter().any(|t| {
+                            t.status == DownloadStatus::Completed && t.full_path() == installer_path
+                        }) {
+                            view.pending_update_installer = None;
+                            let _ = open_file(&installer_path);
+                            view.notice = Some(format!(
+                                "新版本安装包已下载完成并启动: {}",
+                                installer_path.display()
+                            ));
+                            #[cfg(windows)]
+                            if installer_path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+                            {
+                                view.engine.send(EngineCommand::ShutdownAndExit);
+                            }
+                        }
+                    }
                     view.snapshot = next;
                     if let Some(req) = view.engine.pop_pending_request() {
                         view.open_add_modal_with_request(req, window, cx);
@@ -120,13 +150,18 @@ impl IdmMainView {
         })
         .detach();
 
-        Self {
+        let mut view = Self {
             state,
             engine,
             snapshot: EngineSnapshot::default(),
             show_add_modal: false,
             show_batch_modal: false,
             show_settings_modal: false,
+            show_about_modal: false,
+            update_prompt: None,
+            checking_update: false,
+            about_update_status: None,
+            pending_update_installer: None,
             add_tab: AddTaskTab::Basic,
             settings_tab: SettingsTab::General,
             add_inputs,
@@ -135,11 +170,94 @@ impl IdmMainView {
             search_input,
             last_task_statuses: HashMap::new(),
             notice: None,
+        };
+
+        if view.state.settings.auto_check_update {
+            view.trigger_update_check(false, window, cx);
         }
+
+        view
     }
 
     fn sync_global_options(engine: &DownloadEngine, s: &AppSettings) {
         engine.send(EngineCommand::ApplyGlobalOptions(s.to_aria2_global_options()));
+    }
+
+    /// 异步检查 GitHub Releases 最新版本（`manual = false` 时若命中用户已忽略版本则静默跳过）
+    fn trigger_update_check(
+        &mut self,
+        manual: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.checking_update {
+            return;
+        }
+        self.checking_update = true;
+        if manual {
+            self.about_update_status = Some("正在连接 GitHub Releases 检查更新...".into());
+            self.notice = Some("正在检查 GitHub 最新版本...".into());
+        }
+        cx.notify();
+
+        let proxy = self.state.settings.proxy.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            if !manual {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(2))
+                    .await;
+            }
+            let res = cx
+                .background_executor()
+                .spawn(async move {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| e.to_string())?;
+                    rt.block_on(check_github_update(proxy.as_deref()))
+                })
+                .await;
+
+            let _ = this.update_in(cx, |view, _, cx| {
+                view.checking_update = false;
+                match res {
+                    Ok(Some(info)) => {
+                        let is_ignored = !manual
+                            && view
+                                .state
+                                .settings
+                                .ignored_update_version
+                                .as_deref()
+                                == Some(info.latest_version.as_str());
+                        if !is_ignored {
+                            view.about_update_status =
+                                Some(format!("发现新版本: {}", info.latest_version));
+                            view.notice = Some(format!(
+                                "发现新版本 Gravita {}，请确认是否更新",
+                                info.latest_version
+                            ));
+                            view.show_about_modal = false;
+                            view.update_prompt = Some(info);
+                        }
+                    }
+                    Ok(None) => {
+                        if manual {
+                            let msg = format!("✓ 当前已是最新版本 (v{CURRENT_VERSION})");
+                            view.about_update_status = Some(msg.clone());
+                            view.notice = Some(msg);
+                        }
+                    }
+                    Err(err) => {
+                        if manual {
+                            view.about_update_status = Some(err.clone());
+                            view.notice = Some(err);
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 收到浏览器插件拦截请求后，预填全部字段并弹出「新建下载任务」确认窗口
@@ -188,6 +306,7 @@ impl IdmMainView {
         self.add_tab = AddTaskTab::Basic;
         self.show_batch_modal = false;
         self.show_settings_modal = false;
+        self.show_about_modal = false;
         self.show_add_modal = true;
         self.notice = Some("已捕获浏览器下载请求，请确认目录与设置后点击「开始下载」".into());
         self.trigger_url_probe(window, cx);
@@ -386,7 +505,9 @@ impl IdmMainView {
                         this.add_inputs.replace_gid = None;
                         this.add_inputs.probe_status = None;
                         this.add_tab = AddTaskTab::Basic;
+                        this.show_batch_modal = false;
                         this.show_settings_modal = false;
+                        this.show_about_modal = false;
                         this.show_add_modal = true;
                         if auto_probed {
                             this.trigger_url_probe(window, cx);
@@ -412,6 +533,7 @@ impl IdmMainView {
                         this.batch_inputs.use_proxy = false;
                         this.show_add_modal = false;
                         this.show_settings_modal = false;
+                        this.show_about_modal = false;
                         this.show_batch_modal = true;
                         cx.notify();
                     }),
@@ -492,6 +614,7 @@ impl IdmMainView {
                             SettingsInputs::from_settings(&this.state.settings, window, cx);
                         this.show_add_modal = false;
                         this.show_batch_modal = false;
+                        this.show_about_modal = false;
                         this.show_settings_modal = true;
                         cx.notify();
                     },
@@ -510,6 +633,17 @@ impl IdmMainView {
                         hide_window("Gravita 下载器");
                     }),
                 ),
+            )
+            .child(
+                idm_tool_button("tb-about", "ⓘ", rgb(0x7c3aed), "关于", p).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.show_add_modal = false;
+                        this.show_batch_modal = false;
+                        this.show_settings_modal = false;
+                        this.show_about_modal = true;
+                        cx.notify();
+                    },
+                )),
             )
             .child(div().flex_1())
             .child(div().w(px(220.0)).pr_2().child(Input::new(&self.search_input)))
@@ -1116,6 +1250,106 @@ impl Render for IdmMainView {
                         this.notice = Some("设置已保存并实时热更新到 aria2".into());
                     }
                     this.show_settings_modal = false;
+                    cx.notify();
+                }),
+            ));
+        }
+
+        if self.show_about_modal {
+            let aria2_ver = self.snapshot.aria2_version.clone();
+            let upd_status = self.about_update_status.clone();
+            root = root.child(render_about_dialog(
+                aria2_ver.as_deref(),
+                upd_status.as_deref(),
+                self.checking_update,
+                p,
+                cx.listener(|this, _, _, cx| {
+                    let _ = open_url_in_browser(GITHUB_REPO_URL);
+                    this.notice = Some(format!("已在浏览器打开 GitHub 仓库: {GITHUB_REPO_URL}"));
+                    cx.notify();
+                }),
+                cx.listener(|this, _, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(GITHUB_REPO_URL.to_string()));
+                    this.notice = Some(format!("已复制 GitHub 仓库地址: {GITHUB_REPO_URL}"));
+                    cx.notify();
+                }),
+                cx.listener(|this, _, window, cx| {
+                    this.trigger_update_check(true, window, cx);
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.show_about_modal = false;
+                    cx.notify();
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.show_about_modal = false;
+                    cx.notify();
+                }),
+            ));
+        }
+
+        if let Some(info) = self.update_prompt.clone() {
+            let ver_to_ignore = info.latest_version.clone();
+            let release_url_open = info.html_url.clone();
+            let release_url_fallback = info.html_url.clone();
+            let dl_url = info.download_url.clone();
+            let asset_name = info.asset_name.clone();
+
+            root = root.child(render_update_dialog(
+                &info,
+                p,
+                cx.listener(move |this, _, _, cx| {
+                    this.state.settings.ignored_update_version = Some(ver_to_ignore.clone());
+                    let _ = this
+                        .state
+                        .settings
+                        .save_to_file(&AppSettings::default_config_path());
+                    this.update_prompt = None;
+                    this.notice = Some(format!("已忽略版本 {ver_to_ignore} 的自动更新提醒"));
+                    cx.notify();
+                }),
+                cx.listener(move |this, _, _, cx| {
+                    let _ = open_url_in_browser(&release_url_open);
+                    this.notice = Some("已在浏览器打开 GitHub Release 页面".into());
+                    cx.notify();
+                }),
+                cx.listener(move |this, _, _, cx| {
+                    if let (Some(url), Some(filename)) = (dl_url.clone(), asset_name.clone()) {
+                        let save_dir =
+                            this.state.settings.resolve_save_dir(FileCategory::Program);
+                        let target_path = save_dir.join(&filename);
+                        this.pending_update_installer = Some(target_path);
+                        this.engine.send(EngineCommand::AddUri {
+                            url,
+                            filename: Some(filename.clone()),
+                            save_dir: Some(save_dir),
+                            split: this.state.settings.default_split,
+                            max_connection_per_server: this
+                                .state
+                                .settings
+                                .max_connection_per_server,
+                            min_split_size: this.state.settings.min_split_size.clone(),
+                            allow_overwrite: true,
+                            max_download_limit: None,
+                            headers: vec![],
+                            proxy: this.state.settings.proxy.clone(),
+                            replace_gid: None,
+                        });
+                        this.update_prompt = None;
+                        this.notice = Some(format!(
+                            "正在高速下载新版本安装包 {filename}，下载完成后将自动为您启动安装程序"
+                        ));
+                    } else {
+                        let _ = open_url_in_browser(&release_url_fallback);
+                        this.update_prompt = None;
+                    }
+                    cx.notify();
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.update_prompt = None;
+                    cx.notify();
+                }),
+                cx.listener(|this, _, _, cx| {
+                    this.update_prompt = None;
                     cx.notify();
                 }),
             ));

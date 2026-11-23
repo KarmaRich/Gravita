@@ -43,6 +43,7 @@ pub enum SettingsFlag {
     DisableIpv6,
     EnableNotifications,
     AutoStart,
+    AutoCheckUpdate,
 }
 
 /// 选项弹窗全量输入状态集合
@@ -57,6 +58,7 @@ pub struct SettingsInputs {
     pub remote_time: bool,
     pub enable_notifications: bool,
     pub auto_start: bool,
+    pub auto_check_update: bool,
     // 2. 连接与限速
     pub max_concurrent: Entity<InputState>,
     pub split: Entity<InputState>,
@@ -105,6 +107,7 @@ impl SettingsInputs {
             remote_time: s.remote_time,
             enable_notifications: s.enable_notifications,
             auto_start: s.auto_start,
+            auto_check_update: s.auto_check_update,
             max_concurrent: mk(s.max_concurrent_downloads.to_string(), "1 ~ 32", window, cx),
             split: mk(s.default_split.to_string(), "1 ~ 64", window, cx),
             max_conn_per_server: mk(s.max_connection_per_server.to_string(), "1 ~ 64", window, cx),
@@ -150,6 +153,7 @@ impl SettingsInputs {
             SettingsFlag::DisableIpv6 => self.disable_ipv6 = !self.disable_ipv6,
             SettingsFlag::EnableNotifications => self.enable_notifications = !self.enable_notifications,
             SettingsFlag::AutoStart => self.auto_start = !self.auto_start,
+            SettingsFlag::AutoCheckUpdate => self.auto_check_update = !self.auto_check_update,
         }
     }
 
@@ -166,6 +170,7 @@ impl SettingsInputs {
         s.remote_time = self.remote_time;
         s.enable_notifications = self.enable_notifications;
         s.auto_start = self.auto_start;
+        s.auto_check_update = self.auto_check_update;
 
         if let Ok(v) = val(&self.max_concurrent).parse::<u32>() { s.max_concurrent_downloads = v.clamp(1, 32); }
         if let Ok(v) = val(&self.split).parse::<u32>() { s.default_split = v.clamp(1, 64); }
@@ -256,6 +261,28 @@ pub fn open_file(file_path: &Path) -> std::io::Result<()> {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         std::process::Command::new("xdg-open").arg(file_path).spawn()?;
+    }
+    Ok(())
+}
+
+/// 使用系统默认浏览器打开指定的 HTTP/HTTPS 网页链接
+pub fn open_url_in_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(url).spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open").arg(url).spawn()?;
     }
     Ok(())
 }
