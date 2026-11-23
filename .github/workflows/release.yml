@@ -39,8 +39,8 @@ jobs:
           .\scripts\package.ps1
           New-Item -ItemType Directory -Force -Path artifact | Out-Null
           Copy-Item "dist\Gravita-v*-win64.zip" -Destination "artifact\Gravita-$TagName-windows-x86_64-portable.zip"
-          Copy-Item "dist\Gravita-v*-win64\Gravita-Browser-Extension.zip" -Destination "artifact\Gravita-Browser-Extension-$TagName.zip"
-          Copy-Item "dist\Gravita-v*-win64\Gravita-Browser-Extension.crx" -Destination "artifact\Gravita-Browser-Extension-$TagName.crx"
+          Copy-Item "dist\Gravita-Browser-Extension.zip" -Destination "artifact\Gravita-Browser-Extension-$TagName.zip"
+          Copy-Item "dist\Gravita-Browser-Extension.crx" -Destination "artifact\Gravita-Browser-Extension-$TagName.crx"
 
       - name: Build Windows NSIS Setup Installer (.exe)
         shell: pwsh
@@ -69,8 +69,8 @@ jobs:
             SetOutPath "`$INSTDIR"
             File /r "$StageDir\*.*"
             CreateDirectory "`$SMPROGRAMS\Gravita"
-            CreateShortcut "`$SMPROGRAMS\Gravita\Gravita.lnk" "`$INSTDIR\Gravita.exe" "" "`$INSTDIR\resources\gravita.ico"
-            CreateShortcut "`$DESKTOP\Gravita.lnk" "`$INSTDIR\Gravita.exe" "" "`$INSTDIR\resources\gravita.ico"
+            CreateShortcut "`$SMPROGRAMS\Gravita\Gravita.lnk" "`$INSTDIR\Gravita.exe"
+            CreateShortcut "`$DESKTOP\Gravita.lnk" "`$INSTDIR\Gravita.exe"
             WriteUninstaller "`$INSTDIR\Uninstall.exe"
           SectionEnd
 
@@ -243,14 +243,12 @@ jobs:
           VER="${TAG_NAME#v}"
           mkdir -p artifact
 
-          # 1. 组装便携版 .tar.gz（内嵌 OpenSSL 静态增强版 aria2c 与 CA 根证书束）
+          # 1. 组装便携版 .tar.gz（仅含 Gravita 主程序与 resources/bin 下的增强版 aria2c + CA 根证书束）
           PORT_DIR="dist/Gravita-${TAG_NAME}-linux-x86_64"
           mkdir -p "$PORT_DIR/resources/bin"
           cp target/release/Gravita "$PORT_DIR/Gravita"
           cp aria2c "$PORT_DIR/resources/bin/aria2c"
           cp resources/bin/ca-certificates.crt "$PORT_DIR/resources/bin/ca-certificates.crt"
-          cp resources/gravita.png "$PORT_DIR/resources/gravita.png"
-          cp README.md "$PORT_DIR/README.md"
           tar -czf "artifact/Gravita-${TAG_NAME}-linux-x86_64.tar.gz" -C dist "Gravita-${TAG_NAME}-linux-x86_64"
 
           # 2. 组装 Debian/Ubuntu .deb 安装包（内置独立增强版 aria2c，不再依赖系统 apt 的 16 线程旧版 aria2）
