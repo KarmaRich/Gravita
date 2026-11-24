@@ -119,19 +119,32 @@ impl IdmMainView {
                             t.status == DownloadStatus::Completed && t.full_path() == installer_path
                         }) {
                             view.pending_update_installer = None;
-                            let _ = open_file(&installer_path);
-                            view.notice = Some(format!(
-                                "新版本安装包已下载完成并启动: {}",
-                                installer_path.display()
-                            ));
                             #[cfg(windows)]
                             if installer_path
                                 .extension()
                                 .and_then(|e| e.to_str())
                                 .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
                             {
+                                // 将当前安装目录通过 NSIS /D= 参数直接传给更新安装包，确保自动定位到原目录
+                                let mut cmd = std::process::Command::new(&installer_path);
+                                if let Ok(exe_path) = std::env::current_exe() {
+                                    if let Some(install_dir) = exe_path.parent() {
+                                        cmd.arg(format!("/D={}", install_dir.display()));
+                                    }
+                                }
+                                let _ = cmd.spawn();
                                 view.engine.send(EngineCommand::ShutdownAndExit);
+                            } else {
+                                let _ = open_file(&installer_path);
                             }
+                            #[cfg(not(windows))]
+                            {
+                                let _ = open_file(&installer_path);
+                            }
+                            view.notice = Some(format!(
+                                "新版本安装包已下载完成并启动: {}",
+                                installer_path.display()
+                            ));
                         }
                     }
                     view.snapshot = next;
@@ -273,6 +286,7 @@ impl IdmMainView {
         let preferred_dir = req
             .save_dir
             .as_ref()
+            .or(self.state.settings.last_save_dir.as_ref())
             .unwrap_or(&auto_cat_dir)
             .to_string_lossy()
             .into_owned();
@@ -377,15 +391,20 @@ impl IdmMainView {
                                     i.set_value(info.filename.clone(), window, cx)
                                 });
                             }
-                            let auto_dir = view
-                                .state
-                                .settings
-                                .resolve_save_dir(info.category)
-                                .to_string_lossy()
-                                .into_owned();
-                            view.add_inputs
-                                .save_dir
-                                .update(cx, |i, cx| i.set_value(auto_dir, window, cx));
+                            // 仅当用户从未设置过上次保存目录且当前目录为空时，才自动填充分类子目录
+                            if view.state.settings.last_save_dir.is_none()
+                                && view.add_inputs.save_dir.read(cx).value().trim().is_empty()
+                            {
+                                let auto_dir = view
+                                    .state
+                                    .settings
+                                    .resolve_save_dir(info.category)
+                                    .to_string_lossy()
+                                    .into_owned();
+                                view.add_inputs
+                                    .save_dir
+                                    .update(cx, |i, cx| i.set_value(auto_dir, window, cx));
+                            }
                         }
                     }
                     Err(err) => {
@@ -398,14 +417,15 @@ impl IdmMainView {
         .detach();
     }
 
-    /// 返回当前视图应展示的任务列表（无论 aria2 是否在线均可展示已落盘的历史任务）
+    /// 返回当前视图应展示的任务列表（按创建时间倒序排列：最新创建的任务排在最前面）
     fn visible_tasks(&self, cx: &App) -> Vec<DownloadTask> {
         let source: Vec<DownloadTask> = self.snapshot.tasks.clone();
         let kw = self.search_input.read(cx).value().trim().to_ascii_lowercase();
 
-        source
+        let mut list: Vec<(usize, DownloadTask)> = source
             .into_iter()
-            .filter(|t| match self.state.active_filter {
+            .enumerate()
+            .filter(|(_, t)| match self.state.active_filter {
                 SidebarFilter::All => true,
                 SidebarFilter::Active => t.status == DownloadStatus::Active,
                 SidebarFilter::Waiting => t.status == DownloadStatus::Waiting,
@@ -414,12 +434,21 @@ impl IdmMainView {
                 SidebarFilter::Error => t.status == DownloadStatus::Error,
                 SidebarFilter::Category(cat) => t.category == cat,
             })
-            .filter(|t| {
+            .filter(|(_, t)| {
                 kw.is_empty()
                     || t.filename.to_ascii_lowercase().contains(&kw)
                     || t.url.to_ascii_lowercase().contains(&kw)
             })
-            .collect()
+            .collect();
+
+        // 按 created_at_ms 降序排列；对于旧记录时间戳同为 0 的，按原始插入索引逆序（越后加入的越靠前）
+        list.sort_by(|(idx_a, a), (idx_b, b)| {
+            b.created_at_ms
+                .cmp(&a.created_at_ms)
+                .then_with(|| idx_b.cmp(idx_a))
+        });
+
+        list.into_iter().map(|(_, t)| t).collect()
     }
 
     /// 统计某个分类下的真实任务数
@@ -454,14 +483,17 @@ impl IdmMainView {
             .child(
                 idm_tool_button("tb-add", "＋", rgb(0x16a34a), "新建任务", p).on_click(
                     cx.listener(|this, _, window, cx| {
+                        // 优先使用上次选择的下载保存目录，若从未设置过则回退到默认目录
                         let mut default_dir = this
                             .state
                             .settings
-                            .default_download_dir
+                            .last_save_dir
+                            .as_ref()
+                            .unwrap_or(&this.state.settings.default_download_dir)
                             .to_string_lossy()
                             .into_owned();
 
-                        // 自动检测系统剪贴板中的下载链接并预填，同时按分类自动定位子目录并触发探测
+                        // 自动检测系统剪贴板中的下载链接并预填，触发远程大小探测
                         let mut auto_probed = false;
                         if let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) {
                             let trimmed = clip.trim();
@@ -477,13 +509,15 @@ impl IdmMainView {
                                     auto_start: true,
                                 }
                                 .inferred_filename();
-                                let cat = FileCategory::from_filename(&inferred);
-                                default_dir = this
-                                    .state
-                                    .settings
-                                    .resolve_save_dir(cat)
-                                    .to_string_lossy()
-                                    .into_owned();
+                                if this.state.settings.last_save_dir.is_none() {
+                                    let cat = FileCategory::from_filename(&inferred);
+                                    default_dir = this
+                                        .state
+                                        .settings
+                                        .resolve_save_dir(cat)
+                                        .to_string_lossy()
+                                        .into_owned();
+                                }
                                 this.add_inputs
                                     .url
                                     .update(cx, |i, cx| i.set_value(trimmed.to_string(), window, cx));
@@ -879,12 +913,12 @@ impl IdmMainView {
         panel
     }
 
-    /// 渲染底部经典状态栏（显示真实 aria2 在线状态、选中任务错误原因与全局速度）
+    /// 渲染底部经典状态栏（显示简洁就绪状态、选中任务错误原因与全局速度）
     fn render_statusbar(&self, p: IdmPalette) -> impl IntoElement {
-        let status_text = if let Some(ver) = &self.snapshot.aria2_version {
-            format!("● 已连接 aria2 v{ver}")
+        let status_text = if self.snapshot.connected {
+            "● 已就绪".to_string()
         } else {
-            "○ 未连接 aria2c".to_string()
+            "○ 引擎启动中...".to_string()
         };
         let speed = format_speed(self.snapshot.global_download_speed);
         let selected_err = self

@@ -560,6 +560,7 @@ pub fn aria2_status_to_download_task(item: Aria2TaskStatus) -> DownloadTask {
         piece_length: item.piece_length_u64(),
         headers: vec![],
         error_message,
+        created_at_ms: 0,
     }
 }
 

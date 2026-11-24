@@ -85,12 +85,17 @@ pub fn modal_shell(
     footer: impl IntoElement,
 ) -> impl IntoElement {
     div()
+        .id("modal-backdrop")
         .absolute()
         .inset_0()
         .flex()
         .items_center()
         .justify_center()
         .bg(rgba(0x00000055))
+        .occlude()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
         .child(
             div()
                 .w(px(width))

@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "手动触发发布的版本号 (例如 v0.3.0)"
+        description: "手动触发发布的版本号 (例如 v0.4.0)"
         required: true
-        default: "v0.3.0"
+        default: "v0.4.0"
 
 permissions:
   contents: write
@@ -56,18 +56,27 @@ jobs:
           Name "Gravita $Ver"
           OutFile "$OutSetup"
           InstallDir "`$LOCALAPPDATA\Programs\Gravita"
+          InstallDirRegKey HKCU "Software\Gravita" "InstallDir"
           RequestExecutionLevel user
           !define MUI_ICON "$IconPath"
           !define MUI_UNICON "$IconPath"
+          !define MUI_FINISHPAGE_RUN "`$INSTDIR\Gravita.exe"
           !insertmacro MUI_PAGE_DIRECTORY
           !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_PAGE_FINISH
           !insertmacro MUI_UNPAGE_CONFIRM
           !insertmacro MUI_UNPAGE_INSTFILES
           !insertmacro MUI_LANGUAGE "SimpChinese"
 
           Section "Install"
+            ; 覆盖安装/更新前自动结束正在运行的旧版 Gravita 与内置 aria2c，防止文件被占用
+            nsExec::ExecToLog 'taskkill /F /IM Gravita.exe /T'
+            nsExec::ExecToLog 'taskkill /F /IM aria2c.exe /T'
+            Sleep 400
+
             SetOutPath "`$INSTDIR"
             File /r "$StageDir\*.*"
+            WriteRegStr HKCU "Software\Gravita" "InstallDir" "`$INSTDIR"
             CreateDirectory "`$SMPROGRAMS\Gravita"
             CreateShortcut "`$SMPROGRAMS\Gravita\Gravita.lnk" "`$INSTDIR\Gravita.exe"
             CreateShortcut "`$DESKTOP\Gravita.lnk" "`$INSTDIR\Gravita.exe"
@@ -75,8 +84,12 @@ jobs:
           SectionEnd
 
           Section "Uninstall"
+            nsExec::ExecToLog 'taskkill /F /IM Gravita.exe /T'
+            nsExec::ExecToLog 'taskkill /F /IM aria2c.exe /T'
+            Sleep 300
             Delete "`$DESKTOP\Gravita.lnk"
             RMDir /r "`$SMPROGRAMS\Gravita"
+            DeleteRegKey HKCU "Software\Gravita"
             RMDir /r "`$INSTDIR"
           SectionEnd
           "@

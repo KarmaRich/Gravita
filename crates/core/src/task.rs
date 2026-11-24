@@ -95,6 +95,9 @@ pub struct DownloadTask {
     /// 下载失败时来自 aria2 的具体错误信息
     #[serde(default)]
     pub error_message: Option<String>,
+    /// 任务创建时间（Unix 毫秒时间戳，用于列表按最新优先倒序排列）
+    #[serde(default)]
+    pub created_at_ms: u64,
 }
 
 impl DownloadTask {
@@ -210,16 +213,26 @@ impl TaskStore {
                 } else {
                     live.headers.clone()
                 };
+                let preserved_created_at = if existing.created_at_ms > 0 {
+                    existing.created_at_ms
+                } else {
+                    live.created_at_ms
+                };
                 *existing = DownloadTask {
                     url: preserved_url,
                     headers: preserved_headers,
+                    created_at_ms: preserved_created_at,
                     ..live
                 };
                 if status_changed {
                     changed = true;
                 }
             } else {
-                self.tasks.push(live);
+                let mut new_task = live;
+                if new_task.created_at_ms == 0 {
+                    new_task.created_at_ms = current_unix_millis();
+                }
+                self.tasks.push(new_task);
                 changed = true;
             }
         }
@@ -259,6 +272,14 @@ impl TaskStore {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Ok(Self { tasks })
     }
+}
+
+/// 获取当前 Unix 毫秒时间戳
+pub fn current_unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -306,6 +327,7 @@ mod tests {
             piece_length: 125,
             headers: vec![],
             error_message: None,
+            created_at_ms: 1_700_000_000_000,
         });
 
         let matched = store.query(&TaskFilter {

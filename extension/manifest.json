@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gravita 下载助手",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "拦截浏览器下载并转发至 Gravita 桌面客户端（支持透传 Cookie / Referer 与网页视频嗅探）",
   "icons": {
     "16": "icons/icon16.png",
